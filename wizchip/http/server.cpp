@@ -56,13 +56,22 @@ void http::Server::process(int socket_number, const uint8_t* rxBuffer, size_t le
 
     status_stringify(response);
 
+    auto &head = etl::string_cast<WIZCHIP_BUFFER_LENGTH / 2>(txData + WIZCHIP_BUFFER_LENGTH / 2);
+    head = "";
+    for (auto &[key, value] : response.head) if (key) {
+        strncat(head.data(), key.data(), key.len());
+        head += ": ";
+        strncat(head.data(), value.data(), value.len());
+        head += "\r\n";
+    }
+
     auto &text = etl::string_cast(txData);
     text(
         "%.*s %d %s\r\n"
-        "%s\r\n\r\n"
+        "%s\r\n"
         "%s", 
         response.version.len(), response.version.data(), response.status, response.status_string,
-        response.head,
+        head ? head.data() : "\r\n", 
         response.body
     );
     ::send(socket_number, txData, text.len());

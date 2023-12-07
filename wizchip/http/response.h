@@ -14,6 +14,9 @@ namespace Project::wizchip::http {
         etl::Array<HeadKeyValue, 16> head;
         etl::StringView body;
 
+        void set_head(etl::StringView key, etl::StringView value);
+        etl::StringView get_head(etl::StringView key) const;
+
         etl::StringView matches(int index) const {
             return matches_ ? (*matches_)[index] : nullptr;
         }
