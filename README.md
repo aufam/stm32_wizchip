@@ -1,4 +1,5 @@
 # Wizchip interface for STM32
+Inspired by [cpp-httplib](https://github.com/yhirose/cpp-httplib)
 
 ## Requirements
 * C++17
