@@ -2,7 +2,7 @@
 Inspired by [cpp-httplib](https://github.com/yhirose/cpp-httplib)
 
 ## Requirements
-* C++17
+* Arm GNU toolchain
 * cmake minimum version 3.10
 * STM32CubeMx generated code
 
