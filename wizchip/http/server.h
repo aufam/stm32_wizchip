@@ -27,25 +27,27 @@ namespace Project::wizchip::http {
             HandlerFunction function;
         };
 
-        void add(Handler handler);
+        Server& add(Handler handler);
 
-        void Get(const char* url, HandlerFunction handler) { add({"GET", url, handler}); }
-        void Put(const char* url, HandlerFunction handler) { add({"PUT", url, handler}); }
-        void Post(const char* url, HandlerFunction handler) { add({"POST", url, handler}); }
-        void Patch(const char* url, HandlerFunction handler) { add({"PATCH", url, handler}); }
+        Server& Get(const char* url, HandlerFunction handler) { return add({"GET", url, handler}); }
+        Server& Put(const char* url, HandlerFunction handler) { return add({"PUT", url, handler}); }
+        Server& Post(const char* url, HandlerFunction handler) { return add({"POST", url, handler}); }
+        Server& Patch(const char* url, HandlerFunction handler) { return add({"PATCH", url, handler}); }
         
-        void Head(const char* url, HandlerFunction handler) { add({"HEAD", url, handler}); }
-        void Trace(const char* url, HandlerFunction handler) { add({"TRACE", url, handler}); }
-        void Delete(const char* url, HandlerFunction handler) { add({"DELETE", url, handler}); }
-        void Options(const char* url, HandlerFunction handler) { add({"OPTIONS", url, handler}); }
+        Server& Head(const char* url, HandlerFunction handler) { return add({"HEAD", url, handler}); }
+        Server& Trace(const char* url, HandlerFunction handler) { return add({"TRACE", url, handler}); }
+        Server& Delete(const char* url, HandlerFunction handler) { return add({"DELETE", url, handler}); }
+        Server& Options(const char* url, HandlerFunction handler) { return add({"OPTIONS", url, handler}); }
 
-        void listen();
-        void stop();
+        Server& start();
+        Server& stop();
+
+        /// default: reserve 4 sockets from the ethernet
+        int _number_of_socket = 4;
     
     protected:
         void process(int socket_number, const uint8_t* rxBuffer, size_t len) override;
 
-        static uint8_t txData[WIZCHIP_BUFFER_LENGTH];
         etl::Array<Handler, 16> handlers = {};
         int handlers_cnt = 0;
     };

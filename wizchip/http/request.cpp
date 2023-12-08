@@ -3,14 +3,6 @@
 using namespace Project;
 using namespace Project::wizchip;
 
-auto http::Request::get_head(etl::StringView key) const -> etl::StringView {
-    auto pos = head.find(key);
-    if (pos < head.len())
-        return head.substr(pos + 2, head.len() - (pos + 2)); // assuming there is ": "
-
-    return nullptr;
-}
-
 auto http::Request::parse(const uint8_t* buf, size_t len) -> Request {
     auto sv = etl::string_view(buf, len);
     auto req = Request{};
@@ -34,3 +26,15 @@ auto http::Request::parse(const uint8_t* buf, size_t len) -> Request {
     
     return req;
 } 
+
+auto http::Request::get_head(etl::StringView key) const -> etl::StringView {
+    auto pos = head.find(key);
+    if (pos < head.len())
+        return head.substr(pos + 2, head.len() - (pos + 2)); // assuming there is ": "
+
+    return nullptr;
+}
+
+auto http::Request::matches(int index) const -> etl::StringView {
+    return matches_ ? (*matches_)[index] : nullptr;
+}

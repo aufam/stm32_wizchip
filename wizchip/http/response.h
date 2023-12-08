@@ -9,21 +9,13 @@ namespace Project::wizchip::http {
         struct HeadKeyValue { etl::StringView key, value; };
 
         etl::StringView version;
-        int status = -1;
-        etl::StringView status_string;
+        int status = 200;
+        etl::StringView status_string = "OK";
         etl::Array<HeadKeyValue, 16> head;
         etl::StringView body;
 
         void set_head(etl::StringView key, etl::StringView value);
         etl::StringView get_head(etl::StringView key) const;
-
-        etl::StringView matches(int index) const {
-            return matches_ ? (*matches_)[index] : nullptr;
-        }
-    
-    private:
-        friend class Server;
-        etl::StringMatch<16>* matches_ = nullptr;
     };
 }
 

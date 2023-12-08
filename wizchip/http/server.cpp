@@ -6,12 +6,7 @@
 using namespace Project;
 using namespace Project::wizchip;
 
-uint8_t http::Server::txData[WIZCHIP_BUFFER_LENGTH] = {};
-
 static void status_stringify(http::Response& response) {
-    if (response.status_string)
-        return;
-
     switch (response.status) {
         default: response.status_string = ""; break;
         case 200: response.status_string = "OK"; break;
@@ -30,61 +25,77 @@ void http::Server::process(int socket_number, const uint8_t* rxBuffer, size_t le
     auto response = Response {};
     response.version = request.version;
 
+    // handling
+    bool handled = false;
     for (int i = 0; i < handlers_cnt; ++i) {
         auto &handler = handlers[i];
         auto matches = request.url.match(handler.url);
-        response.matches_ = &matches;
+        request.matches_ = &matches;
 
         if (request.method == handler.method and (matches.len() > 0 or request.url == handler.url)) {
             handler.function(request, response);
-            if (response.status < 0)
-                response.status = 200;
+            handled = true;            
             break;
         }
     }
 
-    if (response.status < 0) {
+    // send not found message if not handled
+    if (not handled) {
         const char static nf[] =
             "HTTP/1.1 404 Not Found\r\n"
-            "Content-Type: text/plain"
-            "\r\n\r\n"
+            "Content-Type: text/plain\r\n"
+            "\r\n"
             "Not Found";
         
         ::send(socket_number, (uint8_t*) nf, sizeof(nf));
         return;
     }
 
-    status_stringify(response);
+    // compile all
+    auto &text = etl::string_cast(Ethernet::txData);
 
-    auto &head = etl::string_cast<WIZCHIP_BUFFER_LENGTH / 2>(txData + WIZCHIP_BUFFER_LENGTH / 2);
-    head = "";
-    for (auto &[key, value] : response.head) if (key) {
-        strncat(head.data(), key.data(), key.len());
-        head += ": ";
-        strncat(head.data(), value.data(), value.len());
-        head += "\r\n";
+    // create status
+    if (response.status != 200 and response.status_string == "OK") // modified by handler
+        status_stringify(response);
+    
+    text("%.*s %d %.*s\r\n", 
+        response.version.len(), response.version.data(), 
+        response.status, 
+        response.status_string.len(), response.status_string.data()
+    );
+
+    // create head
+    bool head_is_empty = true;
+    for (auto &[key, value] : response.head) if (key and value) {
+        strncat(text.data(), key.data(), key.len());
+        text += ": ";
+        strncat(text.data(), value.data(), value.len());
+        text += "\r\n";
+        head_is_empty = false;
     }
 
-    auto &text = etl::string_cast(txData);
-    text(
-        "%.*s %d %s\r\n"
-        "%s\r\n"
-        "%s", 
-        response.version.len(), response.version.data(), response.status, response.status_string,
-        head ? head.data() : "\r\n", 
-        response.body
-    );
-    ::send(socket_number, txData, text.len());
+    if (head_is_empty) {
+        sprintf(text.end(), "Content-Length: %d\r\n", response.body.len());
+    }
+
+    // create body
+    sprintf(text.end(), "\r\n%.*s", response.body.len(), response.body.data());
+
+    // send
+    ::send(socket_number, Ethernet::txData, text.len());
 }
 
-void http::Server::add(Handler handler) {
+auto http::Server::add(Handler handler) -> http::Server& {
     handlers[handlers_cnt++] = handler;
+    return *this;
 }
 
-void http::Server::listen() {
-    ethernet.registerSocket(this, 4);
+auto http::Server::start() -> http::Server& {
+    ethernet.registerSocket(this, _number_of_socket);
+    return *this;
 }
 
-void http::Server::stop() {
+auto http::Server::stop() -> http::Server& {
     ethernet.unregisterSocket(this);
+    return *this;
 }

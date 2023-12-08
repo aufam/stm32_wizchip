@@ -37,6 +37,9 @@ namespace Project::wizchip {
 
     class Ethernet {
     public:
+        static uint8_t rxData[WIZCHIP_BUFFER_LENGTH];
+        static uint8_t txData[WIZCHIP_BUFFER_LENGTH];
+
         struct Args {
             SPI_HandleTypeDef& hspi;
             periph::GPIO cs;
@@ -66,8 +69,6 @@ namespace Project::wizchip {
 
         bool isRunning = false;
         Socket* sockets[_WIZCHIP_SOCK_NUM_] = {};
-
-        static uint8_t rxData[WIZCHIP_BUFFER_LENGTH];
         static Ethernet* self;
 
         inline static constexpr wiz_NetInfo DefaultNetInfo = { 

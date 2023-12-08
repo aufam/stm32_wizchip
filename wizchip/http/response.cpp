@@ -11,8 +11,8 @@ auto http::Response::get_head(etl::StringView key) const -> etl::StringView {
     return nullptr;
 }
 
-auto http::Response::set_head(etl::StringView key, etl::StringView value) -> void {
-    for (auto &[key_, value_] : head) if (not key_) {
+void http::Response::set_head(etl::StringView key, etl::StringView value) {
+    for (auto &[key_, value_] : head) if (not key_ or key_ == key) {
         key_ = key;
         value_ = value;
     }

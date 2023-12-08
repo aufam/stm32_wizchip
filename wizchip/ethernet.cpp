@@ -9,6 +9,7 @@ using namespace Project::wizchip;
 
 Ethernet* Ethernet::self = nullptr;
 uint8_t Ethernet::rxData[WIZCHIP_BUFFER_LENGTH] = {};
+uint8_t Ethernet::txData[WIZCHIP_BUFFER_LENGTH] = {};
 
 void Ethernet::init() {
     self = this;
@@ -120,7 +121,7 @@ void Ethernet::setNetInfo(const wiz_NetInfo& netInfo_) {
 
 void Ethernet::registerSocket(Socket* socket, int numberOfSocket) {
     int i = 0;
-    for (auto &socket_instance : sockets) if (socket_instance == nullptr) {
+    for (auto &socket_instance : sockets) if (socket_instance == nullptr or socket_instance == socket) {
         if (i == numberOfSocket) return;
         socket_instance = socket;
         ++i;
