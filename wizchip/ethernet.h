@@ -20,22 +20,32 @@ namespace Project::wizchip {
         struct Args {
             Ethernet& ethernet;
             int port;
-            bool keep_alive;
         };
         
-        constexpr explicit Socket(Args args) : ethernet(args.ethernet), port(args.port), keep_alive(args.keep_alive) {}
+        constexpr explicit Socket(Args args) : ethernet(args.ethernet), port(args.port) {}
+
+        Socket(const Socket&) = delete;
+        Socket& operator=(const Socket&) = delete;
 
         int get_port() const { return port; }
         
     protected:
-        virtual void process(int socket_number, const uint8_t* rx_data, size_t len) = 0;
+        virtual int on_init(int socket_number) = 0;
+        virtual int on_listen(int socket_number) = 0;
+        virtual int on_established(int socket_number) = 0;
+        virtual int on_close_wait(int socket_number) = 0;
+        virtual int on_closed(int socket_number) = 0;
+
+        int allocate(int number_of_socket);
+        void deallocate(int socket_number);
 
         Ethernet& ethernet;
         int port;
-        bool keep_alive;
     };
 
     class Ethernet {
+        friend class Socket;
+
     public:
         static uint8_t rxData[WIZCHIP_BUFFER_LENGTH];
         static uint8_t txData[WIZCHIP_BUFFER_LENGTH];
@@ -48,15 +58,19 @@ namespace Project::wizchip {
         };
 
         constexpr explicit Ethernet(Args args) : hspi(args.hspi), cs(args.cs), rst(args.rst), netInfo(args.netInfo) {}
+
+        Ethernet(const Ethernet&) = delete;
+        Ethernet& operator=(const Ethernet&) = delete;
         
         void init();
         void deinit();
         void setNetInfo(const wiz_NetInfo& netInfo);
 
-        void registerSocket(Socket* socket, int numberOfSocket);
-        void unregisterSocket(Socket* socket);
-        
-        etl::Function<void(const char*), void*> debug;
+        struct Debug {
+            etl::Function<void(const char*), void*> fn;
+            Debug& operator=(etl::Function<void(const char*), void*> fn) { this->fn = fn; return *this; }
+            Debug& operator<<(const char* msg) { fn(msg); return *this; }
+        } debug;
 
     private:
         uint8_t readWriteByte(uint8_t data);

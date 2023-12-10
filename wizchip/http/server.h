@@ -10,16 +10,7 @@ namespace Project::wizchip::http {
 
     class Server : public Socket {
     public:
-        struct Args {
-            Ethernet& ethernet;
-            int port;
-        };
-        
-        constexpr explicit Server(Args args) : Socket({
-            .ethernet=args.ethernet, 
-            .port=args.port, 
-            .keep_alive=true,
-        }) {}
+        constexpr explicit Server(Args args) : Socket(args) {}
 
         using HandlerFunction = etl::Function<void(const Request&, Response&), void*>;
         struct Handler {
@@ -41,15 +32,24 @@ namespace Project::wizchip::http {
 
         Server& start();
         Server& stop();
+        bool is_running() { return _is_running; }
+
+        etl::Function<void(const Request&, const Response&), void*> debug;
 
         /// default: reserve 4 sockets from the ethernet
         int _number_of_socket = 4;
     
     protected:
-        void process(int socket_number, const uint8_t* rxBuffer, size_t len) override;
+        int on_init(int socket_number) override;
+        int on_listen(int socket_number) override;
+        int on_established(int socket_number) override;
+        int on_close_wait(int socket_number) override;
+        int on_closed(int socket_number) override;
+        void process(int socket_number, const uint8_t* rxBuffer, size_t len);
 
         etl::Array<Handler, 16> handlers = {};
         int handlers_cnt = 0;
+        bool _is_running = false;
     };
 }
 

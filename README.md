@@ -45,12 +45,12 @@ auto ethernet = wizchip::Ethernet({
         .pin=GPIO_PIN_2
     },
     .netInfo={ 
-        .mac = { 0x00, 0x08, 0xdc, 0xff, 0xee, 0xdd},
-        .ip = { 192, 168, 0, 130 },
-        .sn = { 255, 255, 255, 0 },
-        .gw = { 192, 168, 0, 254 },
-        .dns = { 8, 8, 8, 8 },
-        .dhcp = NETINFO_STATIC,
+        .mac={0x00, 0x08, 0xdc, 0xff, 0xee, 0xdd},
+        .ip={192, 168, 0, 130},
+        .sn={255, 255, 255, 0},
+        .gw={192, 168, 0, 254},
+        .dns={8, 8, 8, 8},
+        .dhcp=NETINFO_STATIC,
     },
 });
 
@@ -60,23 +60,17 @@ auto server = wizchip::http::Server({
     .port=8080,
 });
 
-// string formatter 64 bytes for debug message
+// string formatter 64 bytes
 auto static f = etl::string<64>();
 
 void http_server_example() {
-    ethernet.debug = [] (const char* str) { periph::usb << str; }; // set debug print to usb
+    ethernet.debug = [] (const char* str) { periph::usb << str; }; // set ethernet debug to usb
     ethernet.init();
 
     // example: create GET method
-    server.Get("/api", [] (const wizchip::http::Request& request, wizchip::http::Response& response) {
-        response.set_head("Content-Type", "text/plain");
+    server.Get("/api", [] (const wizchip::http::Request&, wizchip::http::Response& response) {
+        response.head = "Content-Type: text/plain";
         response.body = "Hello world!";
-
-        ethernet.debug(f("%.*s %.*s %d\r\n", 
-            request.method.len(), request.method.data(),
-            request.url.len(), request.url.data(),
-            response.status
-        ));
     });
 
     // example: create POST method with args
@@ -88,13 +82,7 @@ void http_server_example() {
         // assuming response head won't reach half of the tx buffer
         char* body = reinterpret_cast<char*>(wizchip::Ethernet::txData + (WIZCHIP_BUFFER_LENGTH / 2));
         sprintf(body, "{ \"arg1\": %d, \"arg2\": %.*s }", arg1, arg2.len(), arg2.data());
-
-        size_t strlen_body = strlen(body);
-        char* body_length = body + strlen_body + 1;
-        sprintf(body_length, "%d", strlen_body);
-
-        response.set_head("Content-Type", "application/json");
-        response.set_head("Content-Length", body_length);
+        response.head = f("Content-Type: text/plain" "\r\n" "Content-Length: %d", strlen(body));
         response.body = body;
 
         // example set status
@@ -104,13 +92,15 @@ void http_server_example() {
             response.status = 205;
             response.status_string = "Bad request";
         }
-        
-        ethernet.debug(f("%.*s %.*s %d\r\n", 
+    });
+
+    server.debug = [] (const wizchip::http::Request& request, const wizchip::http::Response& response) {
+        periph::usb << f("%.*s %.*s %d\r\n", 
             request.method.len(), request.method.data(),
             request.url.len(), request.url.data(),
             response.status
-        ));
-    });
+        );
+    }; // set server debug to usb
 
     server.start();
 }

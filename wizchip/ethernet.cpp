@@ -1,6 +1,6 @@
 #include "Ethernet/socket.h"
 #include "etl/thread.h"
-#include "etl/string_view.h"
+#include "etl/string.h"
 #include "wizchip/ethernet.h"
 
 using namespace Project;
@@ -34,12 +34,12 @@ void Ethernet::init() {
 
     uint8_t memsize[2][8] = { {2,2,2,2,2,2,2,2}, {2,2,2,2,2,2,2,2} };
     if (wizchip_init(memsize[0], memsize[1]) == -1) {
-        debug("wizchip_init fail\r\n");
+        debug << "wizchip_init fail\r\n";
         return;
     }
 
     while (wizphy_getphylink() == PHY_LINK_OFF) {
-        debug("wizphy_getphylink PHY_LINK_OFF\r\n");
+        debug << "wizphy_getphylink PHY_LINK_OFF\r\n";
     }
 
     wizchip_setnetinfo(&netInfo);
@@ -53,53 +53,39 @@ void Ethernet::init() {
 }
 
 void Ethernet::execute() {
+    auto static f = etl::string();
     while (isRunning) {
         for (auto socket_number : etl::range(_WIZCHIP_SOCK_NUM_)) {
             auto socket = sockets[socket_number];
             if (socket == nullptr) {
+                etl::this_thread::sleep(1ms);
                 continue;
             }
 
-            switch (getSn_SR(socket_number)) {
-                case SOCK_ESTABLISHED: {
-                    // Interrupt clear
-                    if(getSn_IR(socket_number) & Sn_IR_CON) {
-                        setSn_IR(socket_number, Sn_IR_CON);
-                    }
-
-                    size_t len = getSn_RX_RSR(socket_number);
-                    if (len == 0) 
-                        break;
-                    
-                    if (len > WIZCHIP_BUFFER_LENGTH) 
-                        len = WIZCHIP_BUFFER_LENGTH;
-
-                    len = ::recv(socket_number, rxData, len);
-                    rxData[len] = '\0';
-
-                    socket->process(socket_number, rxData, len);
-
-                    // Check the TX socket buffer for End of HTTP response sends
-                    while (getSn_TX_FSR(socket_number) != (getSn_TxMAX(socket_number))) {}
-                }
-                break;
-
-                case SOCK_CLOSE_WAIT:
-                    ::disconnect(socket_number);
-                    break;
-
-                case SOCK_CLOSED:
-                    if (socket->keep_alive)
-                        ::socket(socket_number, Sn_MR_TCP, socket->port, 0x00);
-                    else 
-                        unregisterSocket(socket);
-                    break;
-
+            switch (int res; getSn_SR(socket_number)) {
                 case SOCK_INIT:
-                    ::listen(socket_number);
+                    socket->on_init(socket_number);
+                    debug << f("%d: socket init\r\n", socket_number);
                     break;
 
                 case SOCK_LISTEN:
+                    socket->on_listen(socket_number);
+                    debug << f("%d: socket listen\r\n", socket_number);
+                    break;
+
+                case SOCK_ESTABLISHED: 
+                    res = socket->on_established(socket_number);
+                    debug << f("%d, %d: socket established\r\n", socket_number, res);
+                    break;
+
+                case SOCK_CLOSE_WAIT:
+                    res = socket->on_close_wait(socket_number);
+                    debug << f("%d, %d: socket close wait\r\n", socket_number, res);
+                    break;
+
+                case SOCK_CLOSED:
+                    socket->on_closed(socket_number);
+                    debug << f("%d: socket closed\r\n", socket_number);
                     break;
 
                 default:
@@ -119,18 +105,19 @@ void Ethernet::setNetInfo(const wiz_NetInfo& netInfo_) {
     wizchip_setnetinfo(&netInfo);
 }
 
-void Ethernet::registerSocket(Socket* socket, int numberOfSocket) {
+int Socket::allocate(int number_of_socket) {
     int i = 0;
-    for (auto &socket_instance : sockets) if (socket_instance == nullptr or socket_instance == socket) {
-        if (i == numberOfSocket) return;
-        socket_instance = socket;
+    for (auto &socket_instance : ethernet.sockets) if (socket_instance == nullptr or socket_instance == this) {
+        if (i == number_of_socket) return i;
+        socket_instance = this;
         ++i;
     }
+    return i;
 }
 
-void Ethernet::unregisterSocket(Socket* socket) {
-    for (auto &socket_instance : sockets) if (socket_instance == socket) {
-        socket_instance = nullptr;
+void Socket::deallocate(int socket_number) {
+    if (ethernet.sockets[socket_number] == this) {
+        ethernet.sockets[socket_number] = nullptr;
     }
 }
 

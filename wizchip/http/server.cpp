@@ -6,18 +6,49 @@
 using namespace Project;
 using namespace Project::wizchip;
 
-static void status_stringify(http::Response& response) {
-    switch (response.status) {
-        default: response.status_string = ""; break;
-        case 200: response.status_string = "OK"; break;
-        case 201: response.status_string = "Created"; break;
-        case 204: response.status_string = "No Content"; break;
-        case 205: response.status_string = "Bad Request"; break;
-        case 401: response.status_string = "Unauthorized"; break;
-        case 403: response.status_string = "Forbidden"; break;
-        case 404: response.status_string = "Not Found"; break;
-        case 500: response.status_string = "Internal Server Error"; break;
+int http::Server::on_init(int socket_number) {
+    return ::listen(socket_number);
+}
+
+int http::Server::on_listen(int) {
+    return SOCK_OK;
+}
+
+int http::Server::on_established(int socket_number) {
+    // Interrupt clear
+    if (getSn_IR(socket_number) & Sn_IR_CON)
+        setSn_IR(socket_number, Sn_IR_CON);
+
+    size_t len = getSn_RX_RSR(socket_number);
+    if (len == 0) 
+        return SOCK_ERROR;
+    
+    if (len > WIZCHIP_BUFFER_LENGTH) 
+        len = WIZCHIP_BUFFER_LENGTH;
+
+    len = ::recv(socket_number, Ethernet::rxData, len);
+    Ethernet::rxData[len] = '\0';
+
+    this->process(socket_number, Ethernet::rxData, len);
+
+    // Check the TX socket buffer for End of HTTP response sends
+    while (getSn_TX_FSR(socket_number) != (getSn_TxMAX(socket_number))) {}
+
+    return SOCK_OK;
+}
+
+int http::Server::on_close_wait(int socket_number) {
+    return ::disconnect(socket_number);
+}
+
+int http::Server::on_closed(int socket_number) {
+    if (_is_running) {
+        // init socket again
+        return ::socket(socket_number, Sn_MR_TCP, port, 0x00);
+    } else {
+        deallocate(socket_number);
     }
+    return SOCK_OK;
 }
 
 void http::Server::process(int socket_number, const uint8_t* rxBuffer, size_t len) {
@@ -55,8 +86,19 @@ void http::Server::process(int socket_number, const uint8_t* rxBuffer, size_t le
     auto &text = etl::string_cast(Ethernet::txData);
 
     // create status
-    if (response.status != 200 and response.status_string == "OK") // modified by handler
-        status_stringify(response);
+    if (response.status != 200 and response.status_string == "OK") { // modified by user
+        switch (response.status) {
+            default: response.status_string = ""; break;
+            case 200: response.status_string = "OK"; break;
+            case 201: response.status_string = "Created"; break;
+            case 204: response.status_string = "No Content"; break;
+            case 205: response.status_string = "Bad Request"; break;
+            case 401: response.status_string = "Unauthorized"; break;
+            case 403: response.status_string = "Forbidden"; break;
+            case 404: response.status_string = "Not Found"; break;
+            case 500: response.status_string = "Internal Server Error"; break;
+        }
+    }
     
     text("%.*s %d %.*s\r\n", 
         response.version.len(), response.version.data(), 
@@ -65,24 +107,22 @@ void http::Server::process(int socket_number, const uint8_t* rxBuffer, size_t le
     );
 
     // create head
-    bool head_is_empty = true;
-    for (auto &[key, value] : response.head) if (key and value) {
-        strncat(text.data(), key.data(), key.len());
-        text += ": ";
-        strncat(text.data(), value.data(), value.len());
-        text += "\r\n";
-        head_is_empty = false;
-    }
-
-    if (head_is_empty) {
-        sprintf(text.end(), "Content-Length: %d\r\n", response.body.len());
+    if (response.head) {
+        ::sprintf(text.end(), "%.*s\r\n", response.head.len(), response.head.data());
+    } else {
+        auto begin = text.end();
+        ::sprintf(begin, "Content-Length: %d\r\n", response.body.len());
+        response.head = begin;
     }
 
     // create body
-    sprintf(text.end(), "\r\n%.*s", response.body.len(), response.body.data());
+    ::sprintf(text.end(), "\r\n%.*s", response.body.len(), response.body.data());
 
     // send
     ::send(socket_number, Ethernet::txData, text.len());
+
+    // debug message
+    debug(request, response);
 }
 
 auto http::Server::add(Handler handler) -> http::Server& {
@@ -91,11 +131,12 @@ auto http::Server::add(Handler handler) -> http::Server& {
 }
 
 auto http::Server::start() -> http::Server& {
-    ethernet.registerSocket(this, _number_of_socket);
+    _is_running = true;
+    allocate(_number_of_socket);
     return *this;
 }
 
 auto http::Server::stop() -> http::Server& {
-    ethernet.unregisterSocket(this);
+    _is_running = false;
     return *this;
 }

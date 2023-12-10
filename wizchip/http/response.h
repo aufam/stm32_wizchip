@@ -6,15 +6,14 @@
 
 namespace Project::wizchip::http {
     struct Response {
-        struct HeadKeyValue { etl::StringView key, value; };
+        static Response parse(const uint8_t* buf, size_t len);
 
         etl::StringView version;
         int status = 200;
         etl::StringView status_string = "OK";
-        etl::Array<HeadKeyValue, 16> head;
+        etl::StringView head;
         etl::StringView body;
 
-        void set_head(etl::StringView key, etl::StringView value);
         etl::StringView get_head(etl::StringView key) const;
     };
 }
