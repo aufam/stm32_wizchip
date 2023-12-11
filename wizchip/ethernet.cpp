@@ -69,8 +69,8 @@ void Ethernet::execute() {
                     break;
 
                 case SOCK_LISTEN:
-                    socket->on_listen(socket_number);
-                    debug << f("%d: socket listen\r\n", socket_number);
+                    res = socket->on_listen(socket_number);
+                    debug << f("%d: socket listen\r\n", socket_number, res);
                     break;
 
                 case SOCK_ESTABLISHED: 
@@ -84,8 +84,8 @@ void Ethernet::execute() {
                     break;
 
                 case SOCK_CLOSED:
-                    socket->on_closed(socket_number);
-                    debug << f("%d: socket closed\r\n", socket_number);
+                    res = socket->on_closed(socket_number);
+                    debug << f("%d, %d: socket closed\r\n", socket_number, res);
                     break;
 
                 default:
