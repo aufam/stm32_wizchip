@@ -1,7 +1,6 @@
 #include "Ethernet/socket.h"
 #include "wizchip/http/server.h"
 #include "etl/string.h"
-#include <stdio.h>
 
 using namespace Project;
 using namespace Project::wizchip;
@@ -61,7 +60,7 @@ void http::Server::process(int socket_number, const uint8_t* rxBuffer, size_t le
     for (int i = 0; i < handlers_cnt; ++i) {
         auto &handler = handlers[i];
         auto matches = request.url.match(handler.url);
-        request.matches_ = &matches;
+        request._matches = &matches;
 
         if (request.method == handler.method and (matches.len() > 0 or request.url == handler.url)) {
             handler.function(request, response);

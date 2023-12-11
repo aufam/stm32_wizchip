@@ -12,9 +12,7 @@ namespace Project::wizchip::http {
         etl::StringView get_head(etl::StringView key) const;
         etl::StringView matches(int index) const;
     
-    private:
-        friend class Server;
-        etl::StringMatch<16>* matches_ = nullptr;
+        etl::StringMatch<16>* _matches = nullptr;
     };
 }
 

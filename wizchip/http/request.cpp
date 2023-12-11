@@ -58,5 +58,5 @@ auto http::Request::get_head(etl::StringView key) const -> etl::StringView {
 }
 
 auto http::Request::matches(int index) const -> etl::StringView {
-    return matches_ ? (*matches_)[index] : nullptr;
+    return _matches ? (*_matches)[index] : nullptr;
 }
