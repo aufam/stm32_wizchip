@@ -106,7 +106,14 @@ namespace Project::wizchip::http {
         etl::Event event;
         Request _request = {};
         Response _response = {};
-        bool _is_running = false;
+
+        enum {
+            STATE_START,
+            STATE_ESTABLISHED,
+            STATE_STOP,
+        };
+
+        int state = STATE_START;
     };
 }
 

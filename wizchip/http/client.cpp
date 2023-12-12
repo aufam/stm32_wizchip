@@ -18,28 +18,34 @@ int http::Client::on_established(int socket_number) {
     if (getSn_IR(socket_number) & Sn_IR_CON)
         setSn_IR(socket_number, Sn_IR_CON);
 
-    // send request
-    this->process(socket_number, Ethernet::txData);
+    if (state == STATE_START) {
+        // send request
+        this->process(socket_number, Ethernet::txData);
 
-    // Check the TX socket buffer for End of HTTP response sends
-    while (getSn_TX_FSR(socket_number) != (getSn_TxMAX(socket_number))) {}
+        // Check the TX socket buffer for End of HTTP response sends
+        while (getSn_TX_FSR(socket_number) != (getSn_TxMAX(socket_number))) {}
 
-    // receive response
-    size_t len = getSn_RX_RSR(socket_number);
-    
-    if (len > WIZCHIP_BUFFER_LENGTH) 
-        len = WIZCHIP_BUFFER_LENGTH;
-
-    len = ::recv(socket_number, Ethernet::rxData, len);
-    Ethernet::rxData[len] = '\0';
-
-    _response = Response::parse(Ethernet::rxData, len);
-    if (handler) {
-        handler(_response);
-    } else {
-        event.setFlags(1);
+        state = STATE_ESTABLISHED;
     }
-    _is_running = false;
+
+    if (state == STATE_ESTABLISHED) {
+        // receive response
+        size_t len = getSn_RX_RSR(socket_number);
+        
+        if (len > WIZCHIP_BUFFER_LENGTH) 
+            len = WIZCHIP_BUFFER_LENGTH;
+
+        len = ::recv(socket_number, Ethernet::rxData, len);
+        Ethernet::rxData[len] = '\0';
+
+        _response = Response::parse(Ethernet::rxData, len);
+        if (handler) {
+            handler(_response);
+        } else {
+            event.setFlags(1);
+        }
+        state = STATE_STOP;
+    }
 
     return SOCK_OK;
 }
@@ -49,20 +55,25 @@ int http::Client::on_close_wait(int socket_number) {
 }
 
 int http::Client::on_closed(int socket_number) {
-    if (not _is_running) {
+    if (state == STATE_START) {
+        auto ip = host.split<4>(".");
+        uint8_t addr[] = { (uint8_t) ip[0].to_int(), (uint8_t) ip[1].to_int(), (uint8_t) ip[2].to_int(), (uint8_t) ip[3].to_int() };
+        ::socket(socket_number, Sn_MR_TCP, port, Sn_MR_ND);
+        return ::connect(socket_number, addr, port);
+    }
+    if (state == STATE_STOP) {
         deallocate(socket_number);
         return SOCK_OK;
     }
-    auto ip = host.split<4>(".");
-    uint8_t addr[] = { (uint8_t) ip[0].to_int(), (uint8_t) ip[1].to_int(), (uint8_t) ip[2].to_int(), (uint8_t) ip[3].to_int() };
-    ::socket(socket_number, Sn_MR_TCP, port, Sn_MR_ND);
-    return ::connect(socket_number, addr, port);
+    else { // TODO: ??
+        return SOCK_OK;
+    }
 }
 
 auto http::Client::request(const http::Request& req) -> http::Response {
-    _is_running = true;
     _request = req;
     this->handler = nullptr;
+    state = STATE_START;
     allocate(1);
 
     event.init();
@@ -76,9 +87,9 @@ auto http::Client::request(const http::Request& req) -> http::Response {
 }
 
 void http::Client::request(const http::Request& req, HandlerFunction handler) {
-    _is_running = true;
     _request = req;
     this->handler = handler;
+    state = STATE_START;
     allocate(1);
 }
 
