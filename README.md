@@ -26,6 +26,7 @@ target_link_libraries(${PROJECT_NAME}.elf wizchip)
 ```
 
 ## Example code
+Server:
 ```c++
 #include "wizchip/http/server.h"
 #include "etl/string.h"
@@ -33,7 +34,7 @@ target_link_libraries(${PROJECT_NAME}.elf wizchip)
 
 using namespace Project;
 
-// create ethernet object.
+// create ethernet object
 auto ethernet = wizchip::Ethernet({
     .hspi=hspi1,
     .cs={
@@ -54,7 +55,7 @@ auto ethernet = wizchip::Ethernet({
     },
 });
 
-// create server object. mark as static
+// create server object
 auto server = wizchip::http::Server({
     .ethernet=ethernet,
     .port=8080,
@@ -81,7 +82,10 @@ void http_server_example() {
 
         // assuming response head won't reach half of the tx buffer
         char* body = reinterpret_cast<char*>(wizchip::Ethernet::txData + (WIZCHIP_BUFFER_LENGTH / 2));
-        sprintf(body, "{ \"arg1\": %d, \"arg2\": %.*s }", arg1, arg2.len(), arg2.data());
+        sprintf(body, 
+            "{ \"arg1\": %d, \"arg2\": %.*s, \"body\": %.*s }", 
+            arg1, arg2.len(), arg2.data(), request.body.len(), request.body.data()
+        );
         response.head = f("Content-Type: text/plain" "\r\n" "Content-Length: %d", strlen(body));
         response.body = body;
 
@@ -103,5 +107,52 @@ void http_server_example() {
     }; // set server debug to usb
 
     server.start();
+}
+```
+
+Client:
+```c++
+
+#include "wizchip/http/client.h"
+#include "periph/usb.h"
+
+using namespace Project;
+
+// create ethernet object
+auto ethernet = wizchip::Ethernet({
+    .hspi=hspi1,
+    .cs={
+        .port=GPIOA, 
+        .pin=GPIO_PIN_4
+    },
+    .rst={
+        .port=GPIOD, 
+        .pin=GPIO_PIN_2
+    },
+    .netInfo={ 
+        .mac={0x00, 0x08, 0xdc, 0xff, 0xee, 0xdd},
+        .ip={192, 168, 0, 131},
+        .sn={255, 255, 255, 0},
+        .gw={192, 168, 0, 254},
+        .dns={8, 8, 8, 8},
+        .dhcp=NETINFO_STATIC,
+    },
+});
+
+void http_client_example() {
+    ethernet.debug = [] (const char* str) { periph::usb << str; }; // set ethernet debug to usb
+    ethernet.init();
+    
+    auto client = wizchip::http::Client({
+        .ethernet=ethernet,
+        .host="192.168.0.130",
+        .port=8080,
+    });
+
+    wizchip::http::Response response1 = client.Get("/api");
+    // process(response1);
+
+    wizchip::http::Response response2 = client.Post("/api/2/valid", "Content-Type: text/plain", "Hello");
+    // process(response2);
 }
 ```
