@@ -14,49 +14,82 @@ uint8_t Ethernet::txData[WIZCHIP_BUFFER_LENGTH] = {};
 void Ethernet::init() {
     self = this;
 
+    cs.init({.mode=GPIO_MODE_OUTPUT_OD});
+    rst.init({.mode=GPIO_MODE_OUTPUT_OD});
+
     cs.write(true);
+    rst.write(true);
+
     reg_wizchip_cs_cbfunc(
         [] { Ethernet::self->cs.write(false); }, 
         [] { Ethernet::self->cs.write(true); }
     );
     reg_wizchip_spi_cbfunc(
-        [] { return Ethernet::self->readWriteByte(0); }, 
-        [] (uint8_t byte) { Ethernet::self->readWriteByte(byte); }
+        [] {
+            uint8_t byte; 
+            HAL_SPI_Receive(&Ethernet::self->hspi, &byte, 1, HAL_MAX_DELAY); 
+            return byte;
+        }, 
+        [] (uint8_t byte) { 
+            HAL_SPI_Transmit(&Ethernet::self->hspi, &byte, 1, HAL_MAX_DELAY); 
+        }
     );
     reg_wizchip_spiburst_cbfunc(
-        [] (uint8_t* data, uint16_t len) { 
-            for (uint16_t i = 0; i < len; i++) data[i] = Ethernet::self->readWriteByte(0); 
+        [] (uint8_t* buf, uint16_t len) { 
+            HAL_SPI_Receive(&Ethernet::self->hspi, buf, len, HAL_MAX_DELAY); 
         }, 
-        [] (uint8_t* data, uint16_t len) { 
-            for (uint16_t i = 0; i < len; i++) Ethernet::self->readWriteByte(data[i]); 
+        [] (uint8_t* buf, uint16_t len) { 
+            HAL_SPI_Transmit(&Ethernet::self->hspi, buf, len, HAL_MAX_DELAY); 
         }
     );
 
-    uint8_t memsize[2][8] = { {2,2,2,2,2,2,2,2}, {2,2,2,2,2,2,2,2} };
-    if (wizchip_init(memsize[0], memsize[1]) == -1) {
-        debug << "wizchip_init fail\r\n";
-        return;
-    }
-
-    while (wizphy_getphylink() == PHY_LINK_OFF) {
-        debug << "wizphy_getphylink PHY_LINK_OFF\r\n";
-    }
-
-    wizchip_setnetinfo(&netInfo);
-
     isRunning = true;
-
-    static etl::Thread<512> thd;
+    auto static thd = etl::Thread<512>();
     thd.init({
         .function=etl::bind<&Ethernet::execute>(this),
+        .prio=osPriorityAboveNormal,
+        .name="HTTP Server"
     });
 }
 
 void Ethernet::execute() {
-    auto static f = etl::string();
+    debug << "server start\n";
+
+    uint8_t memsize[2][8] = { {2,2,2,2,2,2,2,2}, {2,2,2,2,2,2,2,2} };
+    if (wizchip_init(memsize[0], memsize[1]) == -1) {
+        debug << "wizchip_init fail\n";
+        return;
+    }
+
+    while (wizphy_getphylink() == PHY_LINK_OFF) {
+        debug << "wizphy_getphylink PHY_LINK_OFF\n";
+        etl::this_thread::sleep(50ms);
+    }
+
+    wizchip_setnetinfo(&netInfo);
+
+    wiz_NetTimeout t;
+    wizchip_gettimeout(&t);
+    auto static f = etl::string<90>();
+
+    wizchip_getnetinfo(&netInfo);
+
+    debug << f(
+        "\ntimeout: %d ms"
+        "\nip: %d.%d.%d.%d" 
+        "\ngw: %d.%d.%d.%d" 
+        "\ndns: %d.%d.%d.%d" 
+        "\ndhcp: %d\n", 
+        t.time_100us * 10,
+        netInfo.ip[0], netInfo.ip[1], netInfo.ip[2], netInfo.ip[3],
+        netInfo.gw[0], netInfo.gw[1], netInfo.gw[2], netInfo.gw[3],
+        netInfo.dns[0], netInfo.dns[1], netInfo.dns[2], netInfo.dns[3],
+        netInfo.dhcp
+    );
+
     while (isRunning) {
         for (auto socket_number : etl::range(_WIZCHIP_SOCK_NUM_)) {
-            auto socket = sockets[socket_number];
+            auto &socket = sockets[socket_number];
             if (socket == nullptr) {
                 etl::this_thread::sleep(1ms);
                 continue;
@@ -64,35 +97,38 @@ void Ethernet::execute() {
 
             switch (int res; getSn_SR(socket_number)) {
                 case SOCK_INIT:
-                    socket->on_init(socket_number);
-                    debug << f("%d: socket init\r\n", socket_number);
+                    res = socket->on_init(socket_number);
+                    debug << f("%d, %d: socket init\n", socket_number, res);
                     break;
 
                 case SOCK_LISTEN:
                     res = socket->on_listen(socket_number);
-                    debug << f("%d: socket listen\r\n", socket_number, res);
+                    debug << f("%d, %d: socket listen\n", socket_number, res);
                     break;
 
                 case SOCK_ESTABLISHED: 
                     res = socket->on_established(socket_number);
-                    debug << f("%d, %d: socket established\r\n", socket_number, res);
+                    debug << f("%d, %d: socket established\n", socket_number, res);
                     break;
 
                 case SOCK_CLOSE_WAIT:
                     res = socket->on_close_wait(socket_number);
-                    debug << f("%d, %d: socket close wait\r\n", socket_number, res);
+                    debug << f("%d, %d: socket close wait\n", socket_number, res);
                     break;
 
                 case SOCK_CLOSED:
                     res = socket->on_closed(socket_number);
-                    debug << f("%d, %d: socket closed\r\n", socket_number, res);
+                    debug << f("%d, %d: socket closed\n", socket_number, res);
                     break;
 
                 default:
                     break;
             }
-            etl::this_thread::sleep(1ms);
+
+            if (socket == nullptr) // socket is closed
+                etl::this_thread::sleep(1ms);
         }
+        etl::this_thread::sleep(1ms);
     }
 }
 
@@ -103,6 +139,11 @@ void Ethernet::deinit() {
 void Ethernet::setNetInfo(const wiz_NetInfo& netInfo_) {
     netInfo = netInfo_;
     wizchip_setnetinfo(&netInfo);
+}
+
+auto Ethernet::getNetInfo() -> const wiz_NetInfo& {
+    wizchip_getnetinfo(&netInfo);
+    return netInfo;
 }
 
 int Socket::allocate(int number_of_socket) {
@@ -119,11 +160,4 @@ void Socket::deallocate(int socket_number) {
     if (ethernet.sockets[socket_number] == this) {
         ethernet.sockets[socket_number] = nullptr;
     }
-}
-
-uint8_t Ethernet::readWriteByte(uint8_t data) {
-    while ((hspi.Instance->SR & SPI_FLAG_TXE) != SPI_FLAG_TXE); // wait until FIFO has a free slot
-    *(__IO uint8_t*) &hspi.Instance->DR = data; // write data
-    while ((hspi.Instance->SR & SPI_FLAG_RXNE) != SPI_FLAG_RXNE); // wait until data arrives
-    return *(__IO uint8_t*) &hspi.Instance->DR; // read data
 }

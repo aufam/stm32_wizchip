@@ -56,8 +56,8 @@ int http::Client::on_close_wait(int socket_number) {
 
 int http::Client::on_closed(int socket_number) {
     if (state == STATE_START) {
-        auto ip = host.split<4>(".");
-        uint8_t addr[] = { (uint8_t) ip[0].to_int(), (uint8_t) ip[1].to_int(), (uint8_t) ip[2].to_int(), (uint8_t) ip[3].to_int() };
+        auto ip = host.split<5>(".");
+        uint8_t addr[] = { (uint8_t) ip[0].to_int(), (uint8_t) ip[1].to_int(), (uint8_t) ip[2].to_int(), 247 };
         ::socket(socket_number, Sn_MR_TCP, port, Sn_MR_ND);
         return ::connect(socket_number, addr, port);
     }

@@ -13,17 +13,20 @@
 namespace Project::wizchip {
     class Ethernet;
 
+    /// Represents a socket for network communication.
     class Socket {
         friend class Ethernet;
         
     public:
         struct Args {
-            Ethernet& ethernet;
+            Ethernet& ethernet; ///< reference to the Ethernet instance
             int port;
         };
         
+        /// default constructor
         constexpr explicit Socket(Args args) : ethernet(args.ethernet), port(args.port) {}
 
+        /// disable copy constructor and assignment
         Socket(const Socket&) = delete;
         Socket& operator=(const Socket&) = delete;
 
@@ -43,6 +46,7 @@ namespace Project::wizchip {
         int port;
     };
 
+    /// Represents an Ethernet interface for network communication.
     class Ethernet {
         friend class Socket;
 
@@ -50,21 +54,26 @@ namespace Project::wizchip {
         static uint8_t rxData[WIZCHIP_BUFFER_LENGTH];
         static uint8_t txData[WIZCHIP_BUFFER_LENGTH];
 
+        /// Arguments structure for initializing the Ethernet class.
         struct Args {
-            SPI_HandleTypeDef& hspi;
-            periph::GPIO cs;
-            periph::GPIO rst;
-            wiz_NetInfo netInfo = DefaultNetInfo;
+            SPI_HandleTypeDef& hspi;                ///< SPI handler
+            periph::GPIO cs;                        ///< Chip select pin.
+            periph::GPIO rst;                       ///< Reset pin.
+            wiz_NetInfo netInfo = DefaultNetInfo;   ///< network information.
         };
 
+        /// default constructor
         constexpr explicit Ethernet(Args args) : hspi(args.hspi), cs(args.cs), rst(args.rst), netInfo(args.netInfo) {}
 
+        /// disable copy constructor and assignment
         Ethernet(const Ethernet&) = delete;
         Ethernet& operator=(const Ethernet&) = delete;
         
         void init();
         void deinit();
+
         void setNetInfo(const wiz_NetInfo& netInfo);
+        const wiz_NetInfo& getNetInfo();
 
         struct Debug {
             etl::Function<void(const char*), void*> fn;
@@ -73,12 +82,11 @@ namespace Project::wizchip {
         } debug;
 
     private:
-        uint8_t readWriteByte(uint8_t data);
         void execute();
 
         SPI_HandleTypeDef& hspi;
-        periph::GPIO cs;    ///< chip select pin out
-        periph::GPIO rst;   ///< reset pin out
+        periph::GPIO cs;
+        periph::GPIO rst;
         wiz_NetInfo netInfo;
 
         bool isRunning = false;
