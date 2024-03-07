@@ -8,6 +8,9 @@ auto http::Request::parse(const uint8_t* buf, size_t len) -> Request {
     auto req = Request{};
 
     auto methods = sv.split<3>(" ");
+    if (methods.len() < 3)
+        return req;
+    
     req.method = methods[0];
     req.url = methods[1];
     req.version = methods[2].split<1>("\n")[0];
@@ -27,8 +30,13 @@ auto http::Request::parse(const uint8_t* buf, size_t len) -> Request {
     req.head = sv.substr(0, head_end);
     req.body = sv.substr(body_start, sv.len());
 
-    auto body_len = len - (req.body.begin() - reinterpret_cast<const char*>(buf));
-    req.body = etl::string_view(req.body.begin(), body_len); 
+    if (req.body.begin() > reinterpret_cast<const char*>(buf + len)) {
+        req.body = {};
+    }
+    else {
+        auto body_len = len - (req.body.begin() - reinterpret_cast<const char*>(buf));
+        req.body = etl::string_view(req.body.begin(), body_len); 
+    }
     
     return req;
 } 

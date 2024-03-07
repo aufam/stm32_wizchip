@@ -2,7 +2,6 @@
 #include "wizchip/http/client.h"
 #include "etl/string.h"
 
-using namespace Project;
 using namespace Project::wizchip;
 
 int http::Client::on_init(int) {
@@ -39,6 +38,7 @@ int http::Client::on_established(int socket_number) {
         Ethernet::rxData[len] = '\0';
 
         _response = Response::parse(Ethernet::rxData, len);
+        ethernet.debug << "establish\n";
         if (handler) {
             handler(_response);
         } else {
@@ -57,9 +57,20 @@ int http::Client::on_close_wait(int socket_number) {
 int http::Client::on_closed(int socket_number) {
     if (state == STATE_START) {
         auto ip = host.split<5>(".");
-        uint8_t addr[] = { (uint8_t) ip[0].to_int(), (uint8_t) ip[1].to_int(), (uint8_t) ip[2].to_int(), 247 };
-        ::socket(socket_number, Sn_MR_TCP, port, Sn_MR_ND);
-        return ::connect(socket_number, addr, port);
+        uint8_t addr[] = { (uint8_t) ip[0].to_int(), (uint8_t) ip[1].to_int(), (uint8_t) ip[2].to_int(), (uint8_t) ip[3].to_int() };
+
+        auto res = ::socket(socket_number, Sn_MR_TCP, port, Sn_MR_ND);
+        if (res < 0) {
+            deallocate(socket_number);
+            return res;
+        }
+
+        res = ::connect(socket_number, addr, port); 
+        if (res < 0) {
+            deallocate(socket_number);
+        }
+        
+        return res;
     }
     if (state == STATE_STOP) {
         deallocate(socket_number);
@@ -70,27 +81,22 @@ int http::Client::on_closed(int socket_number) {
     }
 }
 
-auto http::Client::request(const http::Request& req) -> http::Response {
+auto http::Client::request(const http::Request& req) -> etl::Future<http::Response> {
     _request = req;
     this->handler = nullptr;
     state = STATE_START;
     allocate(1);
 
-    event.init();
-    event.resetFlags(1);
+    return [this]() -> http::Response {
+        event.init();
+        event.resetFlags(1);
 
-    if (event.waitFlagsAny({.timeout=_timeout})) {
-        return _response;
-    } else {
-        return {};
-    }
-}
-
-void http::Client::request(const http::Request& req, HandlerFunction handler) {
-    _request = req;
-    this->handler = handler;
-    state = STATE_START;
-    allocate(1);
+        if (event.waitFlagsAny({.timeout=timeout})) {
+            return _response;
+        } else {
+            return {};
+        }
+    };
 }
 
 void http::Client::process(int socket_number, uint8_t* txBuffer) {

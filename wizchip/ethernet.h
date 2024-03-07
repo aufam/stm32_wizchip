@@ -30,7 +30,7 @@ namespace Project::wizchip {
         Socket(const Socket&) = delete;
         Socket& operator=(const Socket&) = delete;
 
-        int get_port() const { return port; }
+        int getPort() const { return port; }
         
     protected:
         virtual int on_init(int socket_number) = 0;

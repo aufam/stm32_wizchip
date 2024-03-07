@@ -43,7 +43,12 @@ int http::Server::on_close_wait(int socket_number) {
 int http::Server::on_closed(int socket_number) {
     if (_is_running) {
         // init socket again
-        return ::socket(socket_number, Sn_MR_TCP, port, 0x00);
+        auto res = ::socket(socket_number, Sn_MR_TCP, port, Sn_MR_ND);
+        if (res < 0) {
+            deallocate(socket_number);
+        }
+        
+        return res;
     } else {
         deallocate(socket_number);
     }

@@ -32,7 +32,7 @@ namespace Project::wizchip::http {
 
         Server& start();
         Server& stop();
-        bool is_running() { return _is_running; }
+        bool is_running() const { return _is_running; }
 
         etl::Function<void(const Request&, const Response&), void*> debug;
 

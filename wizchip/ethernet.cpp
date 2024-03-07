@@ -1,5 +1,5 @@
 #include "Ethernet/socket.h"
-#include "etl/thread.h"
+#include "etl/async_task.h"
 #include "etl/string.h"
 #include "wizchip/ethernet.h"
 
@@ -44,16 +44,11 @@ void Ethernet::init() {
     );
 
     isRunning = true;
-    auto static thd = etl::Thread<512>();
-    thd.init({
-        .function=etl::bind<&Ethernet::execute>(this),
-        .prio=osPriorityAboveNormal,
-        .name="HTTP Server"
-    });
+    etl::ignore = etl::tasks.launch(etl::Future<void>(etl::bind<&Ethernet::execute>(this)));
 }
 
 void Ethernet::execute() {
-    debug << "server start\n";
+    debug << "ethernet start\n";
 
     uint8_t memsize[2][8] = { {2,2,2,2,2,2,2,2}, {2,2,2,2,2,2,2,2} };
     if (wizchip_init(memsize[0], memsize[1]) == -1) {
@@ -62,25 +57,26 @@ void Ethernet::execute() {
     }
 
     while (wizphy_getphylink() == PHY_LINK_OFF) {
-        debug << "wizphy_getphylink PHY_LINK_OFF\n";
+        debug << "PHY_LINK_OFF\n";
         etl::this_thread::sleep(50ms);
     }
 
     wizchip_setnetinfo(&netInfo);
 
-    wiz_NetTimeout t;
-    wizchip_gettimeout(&t);
-    auto static f = etl::string<90>();
-
+    wiz_NetTimeout tout;
+    wizchip_gettimeout(&tout);
     wizchip_getnetinfo(&netInfo);
 
+    auto static f = etl::string<256>();
     debug << f(
+        "retry_cnt: %d"
         "\ntimeout: %d ms"
         "\nip: %d.%d.%d.%d" 
         "\ngw: %d.%d.%d.%d" 
         "\ndns: %d.%d.%d.%d" 
         "\ndhcp: %d\n", 
-        t.time_100us * 10,
+        tout.retry_cnt,
+        tout.time_100us * 10,
         netInfo.ip[0], netInfo.ip[1], netInfo.ip[2], netInfo.ip[3],
         netInfo.gw[0], netInfo.gw[1], netInfo.gw[2], netInfo.gw[3],
         netInfo.dns[0], netInfo.dns[1], netInfo.dns[2], netInfo.dns[3],
