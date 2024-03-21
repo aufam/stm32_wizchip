@@ -42,7 +42,7 @@ int http::Client::on_established(int socket_number) {
         if (handler) {
             handler(_response);
         } else {
-            event.setFlags(1);
+            etl::ignore = event.setFlags(1);
         }
         state = STATE_STOP;
     }
@@ -87,15 +87,15 @@ auto http::Client::request(const http::Request& req) -> etl::Future<http::Respon
     state = STATE_START;
     allocate(1);
 
-    return [this]() -> http::Response {
+    return [this](etl::Time timeout) -> etl::Result<http::Response, osStatus_t> {
         event.init();
-        event.resetFlags(1);
+        etl::ignore = event.resetFlags(1);
 
-        if (event.waitFlagsAny({.timeout=timeout})) {
-            return _response;
-        } else {
-            return {};
-        }
+        return event.fetchFlagsAny()
+            .wait(timeout)
+            .then([this](uint32_t flag) { 
+                return flag == 1 ? _response : http::Response{};
+            });
     };
 }
 

@@ -1,5 +1,5 @@
 #include "Ethernet/socket.h"
-#include "etl/async_task.h"
+#include "etl/async.h"
 #include "etl/string.h"
 #include "wizchip/ethernet.h"
 
@@ -44,7 +44,7 @@ void Ethernet::init() {
     );
 
     isRunning = true;
-    etl::ignore = etl::tasks.launch(etl::Future<void>(etl::bind<&Ethernet::execute>(this)));
+    etl::async(etl::bind<&Ethernet::execute>(this));
 }
 
 void Ethernet::execute() {
@@ -61,20 +61,30 @@ void Ethernet::execute() {
         etl::this_thread::sleep(50ms);
     }
 
-    wizchip_setnetinfo(&netInfo);
+    wiz_NetTimeout tout = {.retry_cnt=10, .time_100us=100};
+    wiz_PhyConf phyConf = {1, 0, 0, 0};
 
-    wiz_NetTimeout tout;
+    wizchip_setnetinfo(&netInfo);
+    wizchip_settimeout(&tout);
+
+    wizphy_setphyconf(&phyConf);
+
+    wizphy_getphyconf(&phyConf);
+    wizphy_getphystat(&phyConf);
+
     wizchip_gettimeout(&tout);
     wizchip_getnetinfo(&netInfo);
 
     auto static f = etl::string<256>();
     debug << f(
-        "retry_cnt: %d"
+        "\nconf %d %d %d %d"
+        "\nretry_cnt: %d"
         "\ntimeout: %d ms"
         "\nip: %d.%d.%d.%d" 
         "\ngw: %d.%d.%d.%d" 
         "\ndns: %d.%d.%d.%d" 
         "\ndhcp: %d\n", 
+        phyConf.by, phyConf.mode, phyConf.speed, phyConf.duplex,
         tout.retry_cnt,
         tout.time_100us * 10,
         netInfo.ip[0], netInfo.ip[1], netInfo.ip[2], netInfo.ip[3],
