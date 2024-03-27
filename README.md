@@ -14,10 +14,14 @@ Inspired by [cpp-httplib](https://github.com/yhirose/cpp-httplib)
 * Clone this repo to your STM32 project folder. For example:
 ```bash
 git clone https://github.com/aufam/stm32_wizchip.git <your_project_path>/Middlewares/Third_Party/stm32_wizchip
+cd <your_project_path>/Middlewares/Third_Party/stm32_wizchip
+git submodule update --init --recursive
 ```
 * Or, if Git is configured, you can add this repo as a submodule:
 ```bash
 git submodule add https://github.com/aufam/stm32_wizchip.git <your_project_path>/Middlewares/Third_Party/stm32_wizchip
+cd <your_project_path>/Middlewares/Third_Party/stm32_wizchip
+git submodule update --init --recursive
 ```
 * Link the library to your project in your CMakeLists.txt file:
 ```cmake
