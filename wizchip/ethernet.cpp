@@ -48,6 +48,11 @@ void Ethernet::init() {
 }
 
 void Ethernet::execute() {
+    rst.write(0);
+    etl::task::sleep(100ms).await();
+    rst.write(1);
+    etl::task::sleep(100ms).await();
+
     debug << "ethernet start\n";
 
     uint8_t memsize[2][8] = { {2,2,2,2,2,2,2,2}, {2,2,2,2,2,2,2,2} };
@@ -60,20 +65,17 @@ void Ethernet::execute() {
         debug << "PHY_LINK_OFF\n";
         etl::this_thread::sleep(50ms);
     }
+    
+	wiz_PhyConf phyConf;
+	wizphy_getphystat(&phyConf);
 
     wiz_NetTimeout tout = {.retry_cnt=10, .time_100us=100};
-    wiz_PhyConf phyConf = {1, 0, 0, 0};
 
-    wizchip_setnetinfo(&netInfo);
-    wizchip_settimeout(&tout);
+	wizchip_setnetinfo(&netInfo);
+	wizchip_getnetinfo(&netInfo);
 
-    wizphy_setphyconf(&phyConf);
-
-    wizphy_getphyconf(&phyConf);
-    wizphy_getphystat(&phyConf);
-
-    wizchip_gettimeout(&tout);
-    wizchip_getnetinfo(&netInfo);
+	ctlnetwork(CN_SET_TIMEOUT,(void*)&tout);
+	ctlnetwork(CN_GET_TIMEOUT, (void*)&tout);
 
     auto static f = etl::string<256>();
     debug << f(
