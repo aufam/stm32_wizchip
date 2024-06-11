@@ -15,7 +15,6 @@ Inspired by [cpp-httplib](https://github.com/yhirose/cpp-httplib)
 ```bash
 git clone https://github.com/aufam/stm32_wizchip.git <your_project_path>/Middlewares/Third_Party/stm32_wizchip
 cd <your_project_path>/Middlewares/Third_Party/stm32_wizchip
-git submodule update --init --recursive
 ```
 * Or, if Git is configured, you can add this repo as a submodule:
 ```bash
@@ -33,82 +32,76 @@ target_link_libraries(${PROJECT_NAME}.elf wizchip)
 Server:
 ```c++
 #include "wizchip/http/server.h"
-#include "etl/string.h"
-#include "periph/usb.h"
+#include "etl/json.h"
 
 using namespace Project;
+using namespace Project::wizchip;
 
-// create ethernet object
-auto ethernet = wizchip::Ethernet({
+auto ethernet = Ethernet ({
     .hspi=hspi1,
-    .cs={
-        .port=GPIOA, 
-        .pin=GPIO_PIN_4
-    },
-    .rst={
-        .port=GPIOD, 
-        .pin=GPIO_PIN_2
-    },
+    .cs={.port=CS_GPIO_Port, .pin=CS_Pin},
+    .rst={.port=RESET_GPIO_Port, .pin=RESET_Pin},
     .netInfo={ 
-        .mac={0x00, 0x08, 0xdc, 0xff, 0xee, 0xdd},
-        .ip={192, 168, 0, 130},
+        .mac={0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff},
+        .ip={192, 168, 1, 10},
         .sn={255, 255, 255, 0},
-        .gw={192, 168, 0, 254},
+        .gw={192, 168, 1, 1},
         .dns={8, 8, 8, 8},
         .dhcp=NETINFO_STATIC,
     },
 });
 
-// create server object
-auto server = wizchip::http::Server({
-    .ethernet=ethernet,
-    .port=8080,
+auto server = http::Server({
+    .port=5000,
 });
 
-// string formatter 64 bytes
-auto static f = etl::string<64>();
-
 void http_server_example() {
-    ethernet.debug = [] (const char* str) { periph::usb << str; }; // set ethernet debug to usb
     ethernet.init();
 
-    // example: create GET method
-    server.Get("/api", [] (const wizchip::http::Request&, wizchip::http::Response& response) {
-        response.head = "Content-Type: text/plain";
-        response.body = "Hello world!";
+    // global headers
+    server.global_headers["Server"] = []() -> std::string {
+        return "stm32-wizchip/" WIZCHIP_VERSION;
+    };
+
+    // print hello
+    server.Get("/hello", "text/plain", [](const http::Request&, http::Response& response) {
+        response.body = "Hello world";
     });
 
-    // example: create POST method with args
-    server.Post("/api/%s/%s", [] (const wizchip::http::Request& request, wizchip::http::Response& response) {
-        // extract args
-        int arg1 = request.matches(0).to_int();
-        etl::StringView arg2 = request.matches(1);
+    // display all routes
+    server.Get("/routes", "application/json", [] (const http::Request&, http::Response& response) {
+        response.body = "[";
+        for (auto &router : server.routers) {
+            response.body += std::string() + "{"
+                "\"method\":\"" + router.method + "\","
+                "\"path\":\"" + router.path + "\","
+                "\"responseContentType\":\"" + router.content_type + "\""
+            "},";
+        }
+        response.body.back() = ']';
+    });
 
-        // assuming response head won't reach half of the tx buffer
-        char* body = reinterpret_cast<char*>(wizchip::Ethernet::txData + (WIZCHIP_BUFFER_LENGTH / 2));
-        sprintf(body, 
-            "{ \"arg1\": %d, \"arg2\": %.*s, \"body\": %.*s }", 
-            arg1, arg2.len(), arg2.data(), request.body.len(), request.body.data()
-        );
-        response.head = f("Content-Type: text/plain" "\r\n" "Content-Length: %d", strlen(body));
-        response.body = body;
-
-        // example set status
-        if (arg1 == 2 or arg2 == "valid") {
-            response.status = 200;
-        } else {
-            response.status = 205;
-            response.status_string = "Bad request";
+    // extract queries
+    server.Get("/queries", "application/json", [] (const http::Request& request, http::Response& response) {
+        response.body = "{\"path\":\"" + request.path.full_path + "\"}";
+        for (auto &[key, value] : request.path.queries) {
+            response.body.back() = ',';
+            response.body += "\"" + key +"\":\"" + value + "\"}";
         }
     });
 
-    server.debug = [] (const wizchip::http::Request& request, const wizchip::http::Response& response) {
-        periph::usb << f("%.*s %.*s %d\r\n", 
-            request.method.len(), request.method.data(),
-            request.url.len(), request.url.data(),
-            response.status
-        );
-    }; // set server debug to usb
+    // post json 
+    server.Post("/json", "application/json", [] (const http::Request& request, http::Response& response) {
+        auto json = etl::Json::parse(etl::string_view(request.body.c_str(), request.body.size()));
+        auto json_err = json.error_message();
+
+        if (json_err) {
+            response.status = http::StatusBadRequest;
+            response.body = std::string() + "{\"errorJson\":\"" + json_err.data() + "\",\"body\":" + request.body + "\"}";
+        } else {
+            response.body = request.body;
+        }
+    });
 
     server.start();
 }
@@ -116,47 +109,38 @@ void http_server_example() {
 
 Client:
 ```c++
-
 #include "wizchip/http/client.h"
-#include "periph/usb.h"
 
 using namespace Project;
+using namespace Project::wizchip;
 
 // create ethernet object
-auto ethernet = wizchip::Ethernet({
+auto ethernet = Ethernet({
     .hspi=hspi1,
-    .cs={
-        .port=GPIOA, 
-        .pin=GPIO_PIN_4
-    },
-    .rst={
-        .port=GPIOD, 
-        .pin=GPIO_PIN_2
-    },
+    .cs={.port=GPIOA, .pin=GPIO_PIN_4},
+    .rst={.port=GPIOD, .pin=GPIO_PIN_2},
     .netInfo={ 
-        .mac={0x00, 0x08, 0xdc, 0xff, 0xee, 0xdd},
-        .ip={192, 168, 0, 131},
+        .mac={0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff},
+        .ip={192, 168, 1, 10},
         .sn={255, 255, 255, 0},
-        .gw={192, 168, 0, 254},
+        .gw={192, 168, 1, 1},
         .dns={8, 8, 8, 8},
         .dhcp=NETINFO_STATIC,
     },
 });
 
 void http_client_example() {
-    ethernet.debug = [] (const char* str) { periph::usb << str; }; // set ethernet debug to usb
     ethernet.init();
     
-    auto client = wizchip::http::Client({
-        .ethernet=ethernet,
-        .host="192.168.0.130",
+    auto client = http::Client({
+        .host={192, 168, 1, 11},
         .port=8080,
     });
 
-    wizchip::http::Response response1 = client.Get("/api");
-    // process(response1);
+    // example get request
+    http::Response response1 = client.Get("/api").await().unwrap();
 
-    wizchip::http::Response response2 = client.Post("/api/2/valid", "Content-Type: text/plain", "Hello");
-    // process(response2);
+    // example post request with body
+    http::Response response2 = client.Post("/api/2/valid", "Content-Type: text/plain", "Hello").await().unwrap();
 }
 ```

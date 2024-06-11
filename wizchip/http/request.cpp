@@ -1,70 +1,109 @@
-#include "wizchip/http/request.h"
+#include "request.h"
+#include "etl/heap.h"
+#include "etl/thread.h"
 
 using namespace Project;
 using namespace Project::wizchip;
+using namespace Project::etl::literals;
 
-auto http::Request::parse(const uint8_t* buf, size_t len) -> Request {
-    auto sv = etl::string_view(buf, len);
-    auto req = Request{};
+auto wizchip_http_request_response_parse_headers_body(etl::StringView sv) -> etl::Pair<etl::UnorderedMap<std::string, std::string>, std::string>;
 
-    auto methods = sv.split<3>(" ");
-    if (methods.len() < 3)
-        return req;
-    
-    req.method = methods[0];
-    req.url = methods[1];
-    req.version = methods[2].split<1>("\n")[0];
-    
-    sv = req.version.end() + 1;
-    if (req.version and req.version.back() == '\r')
-        req.version = req.version.substr(0, req.version.len() - 1);
-    
-    auto head_end = sv.find("\r\n\r\n");
-    auto body_start = head_end + 4;
-    if (head_end == sv.len()) {
-        head_end = sv.find("\n\n");
-        body_start = head_end + 2;
-    }
-    // else bad request
-    
-    req.head = sv.substr(0, head_end);
-    req.body = sv.substr(body_start, sv.len());
+auto http::Request::parse(etl::Vector<uint8_t> buf) -> Request {
+    auto sv = etl::string_view(buf.data(), buf.len());
 
-    if (req.body.begin() > reinterpret_cast<const char*>(buf + len)) {
-        req.body = {};
-    }
-    else {
-        auto body_len = len - (req.body.begin() - reinterpret_cast<const char*>(buf));
-        req.body = etl::string_view(req.body.begin(), body_len); 
-    }
+    auto request_line = sv.split<3>(" ");
+    if (request_line.len() < 3)
+        return {};
     
-    return req;
+    auto method = request_line[0];
+    auto path = request_line[1];
+    auto version = request_line[2].split<1>("\n")[0];
+    
+    sv = version.end() + 1;
+    if (version and version.back() == '\r')
+        version = version.substr(0, version.len() - 1);
+
+    auto [headers, body] = wizchip_http_request_response_parse_headers_body(sv);
+    return {
+        .method=std::string(method.data(), method.len()),
+        .path=URL(path),
+        .version=std::string(version.data(), version.len()),
+        .headers=etl::move(headers),
+        .body=etl::move(body),
+    };
 } 
 
-auto http_request_response_get_head(etl::StringView head, etl::StringView key) -> etl::StringView {
-    auto pos = head.find(key);
-    if (pos >= head.len())
-        return nullptr;
-    
-    auto pos_end = pos + key.len();
-    auto res = head.substr(pos_end, head.len() - pos_end);
-    if (res.find(": ") == 0)
-        res = res.substr(2, res.len() - 2);
-    else if (res.find(":") == 0)
-        res = res.substr(1, res.len() - 1);
-    // else bad request header
-    
-    res = res.substr(0, res.find("\n"));
-    if (res and res.back() == '\r')
-        res = res.substr(0, res.len() - 1);
+auto http::Request::dump() const -> etl::Vector<uint8_t> {
+    auto total = method.size() + 1 + path.url.size() + 1 + version.size() + 2;
+    for (auto &[key, value] : headers) {
+        total += key.size() + 2 + value.size() + 2;
+    }
+    total += 2 + body.size();
 
-    return res; 
+    // TODO: some how the body length can't be 0
+    total += etl::max(body.size(), 1u);
+
+    while (total >= etl::heap::freeSize) {
+        etl::this_thread::sleep(1ms);
+    }
+
+    auto res = etl::vector_allocate<uint8_t>(total);
+    auto ptr = reinterpret_cast<char*>(res.data());
+    ptr[total - 1] = '\0';
+
+    auto n = ::snprintf(ptr, total, "%s %s %s\r\n", method.c_str(), path.url.c_str(), version.c_str());
+    if (n < 0) return {};
+    
+    ptr += n;
+    total -= n;
+
+    for (auto &[key, value] : headers) {
+        n = ::snprintf(ptr, total, "%s: %s\r\n", key.c_str(), value.c_str());
+        if (n < 0) return {};
+        
+        ptr += n;
+        total -= n;
+    }
+
+    n = ::snprintf(ptr, total, "\r\n");
+    if (n < 0) return {};
+    
+    ptr += n;
+    total -= n;
+
+    ::memcpy(ptr, body.data(), body.size());
+
+    return res;
 }
 
-auto http::Request::get_head(etl::StringView key) const -> etl::StringView {
-    return http_request_response_get_head(head, key);
-}
+auto wizchip_http_request_response_parse_headers_body(etl::StringView sv) -> etl::Pair<etl::UnorderedMap<std::string, std::string>, std::string> {
+    auto head_end = sv.find("\r\n\r\n");
+    auto body_start = head_end + 4;
+    if (head_end >= sv.len()) {
+        head_end = sv.find("\n\n");
+        body_start -= 2;
+        if (head_end >= sv.len()) {
+            body_start -= 2;
+        }
+    }
 
-auto http::Request::matches(int index) const -> etl::StringView {
-    return _matches ? (*_matches)[index] : nullptr;
+    auto hsv = sv.substr(0, head_end);
+    auto headers = etl::UnorderedMap<std::string, std::string>();
+    auto body = std::string(sv.data() + body_start, sv.len() - body_start);
+
+    for (auto line : hsv.split<16>("\n")) {
+        auto kv = line.split<2>(":");
+        auto key = kv[0];
+        auto value = kv[1];
+
+        if (value and value.back() == '\r')
+            value = value.substr(0, value.len() - 1);
+        
+        while (value and value.front() == ' ') 
+            value = value.substr(1, value.len() - 1);
+        
+        headers[std::string(key.data(), key.end())] = std::string(value.data(), value.end()); 
+    }
+
+    return {etl::move(headers), etl::move(body)};
 }

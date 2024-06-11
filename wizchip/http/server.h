@@ -1,55 +1,69 @@
 #ifndef WIZCHIP_HTTP_SERVER_H
 #define WIZCHIP_HTTP_SERVER_H
 
-#include "etl/function.h"
-#include "wizchip/ethernet.h"
+#include "wizchip/tcp/server.h"
 #include "wizchip/http/request.h"
 #include "wizchip/http/response.h"
+#include <functional>
 
 namespace Project::wizchip::http {
-
-    class Server : public Socket {
+    class Server : public tcp::Server {
     public:
-        constexpr explicit Server(Args args) : Socket(args) {}
-
-        using HandlerFunction = etl::Function<void(const Request&, Response&), void*>;
-        struct Handler {
-            const char* method, * url;
-            HandlerFunction function;
+        struct Args {
+            int port;
         };
 
-        Server& add(Handler handler);
+        Server(Args args) : tcp::Server(tcp::Server::Args{
+            .port=args.port, 
+            .response_function=etl::bind<&Server::_response_function>(this)
+        }) {}
 
-        Server& Get(const char* url, HandlerFunction handler) { return add({"GET", url, handler}); }
-        Server& Put(const char* url, HandlerFunction handler) { return add({"PUT", url, handler}); }
-        Server& Post(const char* url, HandlerFunction handler) { return add({"POST", url, handler}); }
-        Server& Patch(const char* url, HandlerFunction handler) { return add({"PATCH", url, handler}); }
-        
-        Server& Head(const char* url, HandlerFunction handler) { return add({"HEAD", url, handler}); }
-        Server& Trace(const char* url, HandlerFunction handler) { return add({"TRACE", url, handler}); }
-        Server& Delete(const char* url, HandlerFunction handler) { return add({"DELETE", url, handler}); }
-        Server& Options(const char* url, HandlerFunction handler) { return add({"OPTIONS", url, handler}); }
+        using RouterFunction = std::function<void(const Request&, Response&)>;
+        using HeaderGenerator = etl::UnorderedMap<std::string, std::function<std::string()>>;
 
-        Server& start();
-        Server& stop();
-        bool is_running() const { return _is_running; }
+        struct Router {
+            etl::Vector<const char*> methods;
+            std::string path;
+            const char* content_type = "";
+            RouterFunction function;
+        };
 
-        etl::Function<void(const Request&, const Response&), void*> debug;
+        Server& route(Router router) {
+            routers.push(etl::move(router));
+            return *this;
+        }
 
-        /// default: reserve 4 sockets from the ethernet
-        int _number_of_socket = 4;
+        Server& Get(std::string path, const char* content_type, RouterFunction function) { 
+            return route(Router{{"GET"}, etl::move(path), content_type, etl::move(function)}); 
+        }
+        Server& Put(std::string path, const char* content_type, RouterFunction function) { 
+            return route(Router{{"PUT"}, etl::move(path), content_type, etl::move(function)}); 
+        }
+        Server& Post(std::string path, const char* content_type, RouterFunction function) { 
+            return route(Router{{"POST"}, etl::move(path), content_type, etl::move(function)}); 
+        }
+        Server& Patch(std::string path, const char* content_type, RouterFunction function) { 
+            return route(Router{{"PATCH"}, etl::move(path), content_type, etl::move(function)}); 
+        }
+        Server& Head(std::string path, const char* content_type, RouterFunction function) { 
+            return route(Router{{"HEAD"}, etl::move(path), content_type, etl::move(function)}); 
+        }
+        Server& Trace(std::string path, const char* content_type, RouterFunction function) { 
+            return route(Router{{"TRACE"}, etl::move(path), content_type, etl::move(function)}); 
+        }
+        Server& Delete(std::string path, const char* content_type, RouterFunction function) { 
+            return route(Router{{"DELETE"}, etl::move(path), content_type, etl::move(function)}); 
+        }
+        Server& Options(std::string path, const char* content_type, RouterFunction function) { 
+            return route(Router{{"OPTIONS"}, etl::move(path), content_type, etl::move(function)}); 
+        }
+
+        HeaderGenerator global_headers;
+        std::function<void(const Request&, const Response&)> logger = {};
+        [[read_only]] etl::LinkedList<Router> routers;
     
     protected:
-        int on_init(int socket_number) override;
-        int on_listen(int socket_number) override;
-        int on_established(int socket_number) override;
-        int on_close_wait(int socket_number) override;
-        int on_closed(int socket_number) override;
-        void process(int socket_number, const uint8_t* rxBuffer, size_t len);
-
-        etl::Array<Handler, 16> handlers = {};
-        int handlers_cnt = 0;
-        bool _is_running = false;
+        etl::Vector<uint8_t> _response_function(etl::Vector<uint8_t>);
     };
 }
 

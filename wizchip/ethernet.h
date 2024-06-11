@@ -1,69 +1,36 @@
 #ifndef WIZCHIP_ETHERNET_H
 #define WIZCHIP_ETHERNET_H
 
+#include "wizchip_conf.h"
 #include "Core/Inc/spi.h"
 #include "periph/gpio.h"
-#include "etl/function.h"
-#include "wizchip_conf.h"
-
-#ifndef WIZCHIP_BUFFER_LENGTH
-#define WIZCHIP_BUFFER_LENGTH 2048
-#endif
+#include "etl/mutex.h"
+#include "etl/vector.h"
+#include "etl/future.h"
 
 namespace Project::wizchip {
-    class Ethernet;
-
-    /// Represents a socket for network communication.
-    class Socket {
-        friend class Ethernet;
-        
-    public:
-        struct Args {
-            Ethernet& ethernet; ///< reference to the Ethernet instance
-            int port;
-        };
-        
-        /// default constructor
-        constexpr explicit Socket(Args args) : ethernet(args.ethernet), port(args.port) {}
-
-        /// disable copy constructor and assignment
-        Socket(const Socket&) = delete;
-        Socket& operator=(const Socket&) = delete;
-
-        int getPort() const { return port; }
-        
-    protected:
-        virtual int on_init(int socket_number) = 0;
-        virtual int on_listen(int socket_number) = 0;
-        virtual int on_established(int socket_number) = 0;
-        virtual int on_close_wait(int socket_number) = 0;
-        virtual int on_closed(int socket_number) = 0;
-
-        int allocate(int number_of_socket);
-        void deallocate(int socket_number);
-
-        Ethernet& ethernet;
-        int port;
-    };
+    class SocketServer;
+    class SocketSession;
 
     /// Represents an Ethernet interface for network communication.
+    [[singleton]]
     class Ethernet {
-        friend class Socket;
+        friend class SocketServer;
+        friend class SocketSession;
 
     public:
-        static uint8_t rxData[WIZCHIP_BUFFER_LENGTH];
-        static uint8_t txData[WIZCHIP_BUFFER_LENGTH];
-
         /// Arguments structure for initializing the Ethernet class.
         struct Args {
             SPI_HandleTypeDef& hspi;                ///< SPI handler
             periph::GPIO cs;                        ///< Chip select pin.
             periph::GPIO rst;                       ///< Reset pin.
-            wiz_NetInfo netInfo = DefaultNetInfo;   ///< network information.
+            wiz_NetInfo netInfo;                    ///< network information.
         };
 
         /// default constructor
-        constexpr explicit Ethernet(Args args) : hspi(args.hspi), cs(args.cs), rst(args.rst), netInfo(args.netInfo) {}
+        explicit Ethernet(Args args) : hspi(args.hspi), cs(args.cs), rst(args.rst), netInfo(args.netInfo) {}
+        
+        static Ethernet* self;
 
         /// disable copy constructor and assignment
         Ethernet(const Ethernet&) = delete;
@@ -71,15 +38,17 @@ namespace Project::wizchip {
         
         void init();
         void deinit();
+        bool isRunning() const;
 
         void setNetInfo(const wiz_NetInfo& netInfo);
         const wiz_NetInfo& getNetInfo();
 
-        struct Debug {
-            etl::Function<void(const char*), void*> fn;
-            Debug& operator=(etl::Function<void(const char*), void*> fn) { this->fn = fn; return *this; }
-            Debug& operator<<(const char* msg) { fn(msg); return *this; }
-        } debug;
+        struct Logger {
+            std::function<void(const char*)> function;
+            Logger& operator<<(const char* msg) { if (function) function(msg); return *this; }
+        } logger = {};
+
+        etl::Mutex mutex;
 
     private:
         void execute();
@@ -89,20 +58,72 @@ namespace Project::wizchip {
         periph::GPIO rst;
         wiz_NetInfo netInfo;
 
-        bool isRunning = false;
-        Socket* sockets[_WIZCHIP_SOCK_NUM_] = {};
-        static Ethernet* self;
+        bool _is_running = false;
 
-        inline static constexpr wiz_NetInfo DefaultNetInfo = { 
-            .mac = { 0x00, 0x08, 0xdc, 0xff, 0xee, 0xdd},
-            .ip = { 192, 168, 0, 130 },
-            .sn = { 255, 255, 255, 0 },
-            .gw = { 192, 168, 0, 254 },
-            //.dns = { 168, 126, 63, 1 },
-            .dns = { 8, 8, 8, 8 },
-            .dhcp = NETINFO_STATIC,
+        struct SocketHandler {
+            SocketServer* socket_interface;    
+            bool socket_session;
+            bool is_busy() const { return socket_interface || socket_session; }
         };
+        SocketHandler socket_handlers[_WIZCHIP_SOCK_NUM_] = {};
+    };
+
+    /// Represents a socket for network communication.
+    class SocketServer {
+        friend class Ethernet;
+        
+    public:
+        struct Args {
+            int port;
+            etl::Function<etl::Vector<uint8_t>(etl::Vector<uint8_t>), void*> response_function;
+        };
+
+        constexpr SocketServer(Args args) : port(args.port), response_function(args.response_function) {}
+
+        /// disable copy constructor and assignment
+        SocketServer(const SocketServer&) = delete;
+        SocketServer& operator=(const SocketServer&) = delete;
+
+        void start(int number_of_socket = 1);
+        void stop();
+        bool isRunning() const;
+
+        int port;
+        etl::Function<etl::Vector<uint8_t>(etl::Vector<uint8_t>), void*> response_function;
+
+    protected:
+        virtual const char* kind() = 0;
+        virtual int on_init(int socket_number) = 0;
+        virtual int on_listen(int socket_number) = 0;
+        virtual int on_established(int socket_number) = 0;
+        virtual int on_close_wait(int socket_number) = 0;
+        virtual int on_closed(int socket_number) = 0;
+
+        etl::Vector<int> reserved_sockets;
+    };
+
+    class SocketSession {
+        friend class Ethernet;
+    
+    public:
+        SocketSession(uint8_t protocol, uint8_t flag, etl::Vector<uint8_t> host, int port);
+        ~SocketSession();
+
+        etl::Vector<uint8_t> host;
+        int port;
+        int socket_number;
     };
 } 
+
+namespace Project::wizchip::detail {
+    etl::Vector<uint8_t> ipv4_to_bytes(const char* ip);
+    etl::Pair<etl::Vector<uint8_t>, uint16_t> ipv4_port_to_pair(const char* ip_port);
+    
+    etl::Result<void, osStatus_t> tcp_transmit(int socket_number, etl::Vector<uint8_t> data);
+    etl::Result<etl::Vector<uint8_t>, osStatus_t> tcp_receive(int socket_number);
+
+    etl::Result<void, osStatus_t> udp_transmit(int socket_number, etl::Vector<uint8_t> ip, int port, etl::Vector<uint8_t> data);
+    etl::Result<etl::Vector<uint8_t>, osStatus_t> udp_receive(int socket_number, etl::Vector<uint8_t> ip);
+}
 
 #endif // WIZCHIP_ETHERNET_H

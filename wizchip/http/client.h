@@ -1,87 +1,79 @@
 #ifndef WIZCHIP_HTTP_CLIENT_H
 #define WIZCHIP_HTTP_CLIENT_H
 
-#include "etl/future.h"
-#include "etl/event.h"
-#include "wizchip/ethernet.h"
+#include "wizchip/tcp/client.h"
 #include "wizchip/http/request.h"
 #include "wizchip/http/response.h"
 
 namespace Project::wizchip::http {
 
-    class Client : public Socket {
+    class Client : public tcp::Client {
     public:
-        struct Args {
-            Ethernet& ethernet;
-            etl::StringView host;
-            int port;
-        };
+        using tcp::Client::Client;
 
-        constexpr explicit Client(Args args) : Socket({args.ethernet, args.port}), host(args.host) {}
+        explicit Client(std::string host);
 
         using HandlerFunction = etl::Function<void(const Response&), void*>;
 
-        etl::Future<Response> request(const Request& req);
+        etl::Future<Response> request(Request req);
 
-        etl::Future<Response> Get(etl::StringView url) { 
-            return request({.method="GET", .url=url, .version="HTTP/1.1", .head="", .body=""}); 
+        etl::Future<Response> Get(std::string path, etl::UnorderedMap<std::string, std::string> headers = {}, std::string body = "") { 
+            return request({.method="GET", .path=etl::move(path), .version="HTTP/1.1", .headers=etl::move(headers), .body=etl::move(body)}); 
         }
-
-        etl::Future<Response> Put(etl::StringView url, etl::StringView head, etl::StringView body) {
-            return request({.method="PUT", .url=url, .version="HTTP/1.1", .head=head, .body=body}); 
+        etl::Future<Response> Put(std::string path, etl::UnorderedMap<std::string, std::string> headers, std::string body) {
+            return request({.method="PUT", .path=etl::move(path), .version="HTTP/1.1", .headers=etl::move(headers), .body=etl::move(body)}); 
         }
-
-        etl::Future<Response> Post(etl::StringView url, etl::StringView head, etl::StringView body) {
-            return request({.method="POST", .url=url, .version="HTTP/1.1", .head=head, .body=body}); 
+        etl::Future<Response> Post(std::string path, etl::UnorderedMap<std::string, std::string> headers, std::string body) {
+            return request({.method="POST", .path=etl::move(path), .version="HTTP/1.1", .headers=etl::move(headers), .body=etl::move(body)}); 
         }
-
-        etl::Future<Response> Patch(etl::StringView url, etl::StringView head, etl::StringView body) {
-            return request({.method="PATCH", .url=url, .version="HTTP/1.1", .head=head, .body=body}); 
+        etl::Future<Response> Patch(std::string path, etl::UnorderedMap<std::string, std::string> headers, std::string body) {
+            return request({.method="PATCH", .path=etl::move(path), .version="HTTP/1.1", .headers=etl::move(headers), .body=etl::move(body)}); 
         }
-        
-        etl::Future<Response> Head(etl::StringView url) {
-            return request({.method="HEAD", .url=url, .version="HTTP/1.1", .head="", .body=""}); 
+        etl::Future<Response> Head(std::string path, etl::UnorderedMap<std::string, std::string> headers = {}, std::string body = "") {
+            return request({.method="HEAD", .path=etl::move(path), .version="HTTP/1.1", .headers=etl::move(headers), .body=etl::move(body)}); 
         }
-
-        etl::Future<Response> Trace(etl::StringView url, etl::StringView head, etl::StringView body) {
-            return request({.method="TRACE", .url=url, .version="HTTP/1.1", .head=head, .body=body}); 
+        etl::Future<Response> Trace(std::string path, etl::UnorderedMap<std::string, std::string> headers, std::string body) {
+            return request({.method="TRACE", .path=etl::move(path), .version="HTTP/1.1", .headers=etl::move(headers), .body=etl::move(body)}); 
         }
-
-        etl::Future<Response> Delete(etl::StringView url, etl::StringView head = "", etl::StringView body = "") {
-            return request({.method="DELETE", .url=url, .version="HTTP/1.1", .head=head, .body=body}); 
+        etl::Future<Response> Delete(std::string path, etl::UnorderedMap<std::string, std::string> headers = {}, std::string body = "") {
+            return request({.method="DELETE", .path=etl::move(path), .version="HTTP/1.1", .headers=etl::move(headers), .body=etl::move(body)}); 
         }
-
-        etl::Future<Response> Options(etl::StringView url) {
-            return request({.method="OPTIONS", .url=url, .version="HTTP/1.1", .head="", .body=""}); 
+        etl::Future<Response> Options(std::string path, etl::UnorderedMap<std::string, std::string> headers = {}, std::string body = "") {
+            return request({.method="OPTIONS", .path=etl::move(path), .version="HTTP/1.1", .headers=etl::move(headers), .body=etl::move(body)}); 
         }
-
-        etl::Function<void(const Request&, const Response&), void*> debug;
-
-        /// default timeout = 1s;
-        etl::Time timeout = etl::time::seconds(1);
-    
-    protected:
-        int on_init(int socket_number) override;
-        int on_listen(int socket_number) override;
-        int on_established(int socket_number) override;
-        int on_close_wait(int socket_number) override;
-        int on_closed(int socket_number) override;
-        void process(int socket_number, uint8_t* txBuffer);
-
-        etl::StringView host;
-        HandlerFunction handler;
-        etl::Event event;
-        Request _request = {};
-        Response _response = {};
-
-        enum {
-            STATE_START,
-            STATE_ESTABLISHED,
-            STATE_STOP,
-        };
-
-        int state = STATE_START;
     };
+
+    struct HeadersBody {
+        etl::UnorderedMap<std::string, std::string> headers = {};
+        std::string body = "";
+    };
+
+    etl::Future<Response> request(std::string method, URL url, HeadersBody headers_body);
+
+    inline etl::Future<Response> Get(URL url, HeadersBody headers_body = {}) { 
+        return request("GET", url, etl::move(headers_body)); 
+    }
+    inline etl::Future<Response> Put(URL url, HeadersBody headers_body) { 
+        return request("PUT", url, etl::move(headers_body)); 
+    }
+    inline etl::Future<Response> Post(URL url, HeadersBody headers_body) { 
+        return request("POST", url, etl::move(headers_body)); 
+    }
+    inline etl::Future<Response> Patch(URL url, HeadersBody headers_body) { 
+        return request("PATCH", url, etl::move(headers_body)); 
+    }
+    inline etl::Future<Response> Head(URL url, HeadersBody headers_body = {}) { 
+        return request("HEAD", url, etl::move(headers_body)); 
+    }
+    inline etl::Future<Response> Trace(URL url, HeadersBody headers_body) { 
+        return request("TRACE", url, etl::move(headers_body)); 
+    }
+    inline etl::Future<Response> Delete(URL url, HeadersBody headers_body = {}) { 
+        return request("DELETE", url, etl::move(headers_body)); 
+    }
+    inline etl::Future<Response> Options(URL url, HeadersBody headers_body = {}) { 
+        return request("OPTIONS", url, etl::move(headers_body)); 
+    }
 }
 
 #endif

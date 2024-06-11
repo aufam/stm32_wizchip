@@ -1,48 +1,80 @@
-#include "wizchip/http/response.h"
+#include "response.h"
+#include "etl/heap.h"
+#include "etl/thread.h"
 
 using namespace Project;
 using namespace Project::wizchip;
+using namespace Project::etl::literals;
 
-auto http::Response::parse(const uint8_t* buf, size_t len) -> Response {
-    auto sv = etl::string_view(buf, len);
-    auto res = Response{};
+auto wizchip_http_request_response_parse_headers_body(etl::StringView sv) -> etl::Pair<etl::UnorderedMap<std::string, std::string>, std::string>;
 
+auto http::Response::parse(etl::Vector<uint8_t> buf) -> Response {
+    auto sv = etl::string_view(buf.data(), buf.len());
     auto methods = sv.split<3>(" ");
-    if (methods.len() < 3)
-        return res;
-    
-    res.version = methods[0];
-    res.status = methods[1].to_int();
-    res.status_string = methods[2].split<1>("\n")[0];
-    
-    sv = res.status_string.end() + 1;
-    if (res.status_string and res.status_string.back() == '\r')
-        res.status_string = res.status_string.substr(0, res.status_string.len() - 1);
-    
-    auto head_end = sv.find("\r\n\r\n");
-    auto body_start = head_end + 4;
-    if (head_end == sv.len()) {
-        head_end = sv.find("\n\n");
-        body_start = head_end + 2;
-    }
-    // else bad response
-    
-    res.head = sv.substr(0, head_end);
-    res.body = sv.substr(body_start, sv.len());
 
-    if (res.body.begin() > reinterpret_cast<const char*>(buf + len)) {
-        res.body = {};
-    }
-    else {
-        auto body_len = len - (res.body.begin() - reinterpret_cast<const char*>(buf));
-        res.body = etl::string_view(res.body.begin(), body_len); 
-    }
+    if (methods.len() < 3)
+        return {};
     
-    return res;
+    auto version = methods[0];
+    auto status = methods[1].to_int();
+    auto status_string = methods[2].split<1>("\n")[0];
+    
+    sv = status_string.end() + 1;
+    if (status_string and status_string.back() == '\r')
+        status_string = status_string.substr(0, status_string.len() - 1);
+
+    auto [headers, body] = wizchip_http_request_response_parse_headers_body(sv);
+    return {
+        .version=std::string(version.data(), version.len()),
+        .status=status,
+        .status_string=std::string(status_string.data(), status_string.len()),
+        .headers=etl::move(headers),
+        .body=etl::move(body),
+    };
 } 
 
-auto http_request_response_get_head(etl::StringView head, etl::StringView key) -> etl::StringView;
+auto http::Response::dump() const -> etl::Vector<uint8_t> {
+    auto status_num = std::to_string(status);
 
-auto http::Response::get_head(etl::StringView key) const -> etl::StringView {
-    return http_request_response_get_head(head, key);
+    auto total = version.size() + 1 + status_num.size() + 1 + status_string.size() + 2;
+    for (auto &[key, value] : headers) {
+        total += key.size() + 2 + value.size() + 2;
+    }
+    total += 2 + body.size();
+
+
+    while (total >= etl::heap::freeSize) {
+        etl::this_thread::sleep(1ms);
+    }
+
+    auto res = etl::vector_allocate<uint8_t>(total);
+    auto ptr = reinterpret_cast<char*>(res.data());
+
+    auto n = ::snprintf(ptr, total, "%s %s %s\r\n", version.c_str(), status_num.c_str(), status_string.c_str());
+    if (n < 0) return {};
+    
+    ptr += n;
+    total -= n;
+
+    for (auto &[key, value] : headers) {
+        n = ::snprintf(ptr, total, "%s: %s\r\n", key.c_str(), value.c_str());
+        if (n < 0) return {};
+        
+        ptr += n;
+        total -= n;
+    }
+
+    n = ::snprintf(ptr, total, "\r\n");
+    if (n < 0) return {};
+    
+    ptr += n;
+    total -= n;
+
+    ::memcpy(ptr, body.data(), body.size());
+    return res;
+}
+
+void http::Response::set_content(std::string content, std::string content_type) {
+    body = etl::move(content);
+    headers["Content-Type"] = etl::move(content_type);
 }
