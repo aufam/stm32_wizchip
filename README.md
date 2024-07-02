@@ -15,7 +15,7 @@ Wizchip interface for STM32
 ## How to use
 * Clone this repo to your STM32 project folder. For example:
 ```bash
-git clone https://github.com/aufam/stm32_wizchip.git <your_project_path>/Middlewares/Third_Party/stm32_wizchip
+git clone https://github.com/aufam/stm32_wizchip.git <your_project_path>/Middlewares/Third_Party/stm32_wizchip --recursive
 ```
 * Or, if Git is configured, you can add this repo as a submodule:
 ```bash
