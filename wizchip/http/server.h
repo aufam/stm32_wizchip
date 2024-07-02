@@ -126,19 +126,24 @@ namespace Project::wizchip::http {
                 if (err) {
                     return error_handler(etl::move(*err), req, res);
                 }
-
-                // unwrap each arg values and apply to handler
-                R result = std::apply([&](auto&... args) { return handler(etl::move(args.unwrap())...); }, arg_values);
-                if constexpr (is_router_result_v<R>) {
-                    if (result.is_err()) {
-                        return error_handler(etl::move(result.unwrap_err()), req, res);
+               
+                // apply handler
+                if constexpr (etl::is_same_v<R, void>) {
+                    std::apply([&](auto&... args) { handler(etl::move(args.unwrap())...); }, arg_values);
+                } else {
+                    // unwrap each arg values and apply to handler
+                    R result = std::apply([&](auto&... args) { return handler(etl::move(args.unwrap())...); }, arg_values);
+                    if constexpr (is_router_result_v<R>) {
+                        if (result.is_err()) {
+                            return error_handler(etl::move(result.unwrap_err()), req, res);
+                        }
+                        if constexpr (not etl::is_same_v<router_result_t<R>, void>) {
+                            process_result(result.unwrap(), res);
+                        }
+                    } else {
+                        process_result(result, res);
                     }
-                    if constexpr (not etl::is_same_v<router_result_t<R>, void>) {
-                        process_result(result.unwrap(), res);
-                    }
-                } else if constexpr (not etl::is_same_v<R, void>) {
-                    process_result(result, res);
-                }
+                } 
             };
 
             routers.push(Router{etl::move(path), etl::move(methods), etl::move(function)});
