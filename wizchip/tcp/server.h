@@ -5,9 +5,6 @@
 
 namespace Project::wizchip::tcp {
     class Server : public SocketServer {
-    public:
-        using SocketServer::SocketServer;
-
     protected:
         int on_init(int socket_number) override;
         int on_listen(int socket_number) override;

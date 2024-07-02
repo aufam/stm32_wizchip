@@ -41,6 +41,9 @@ namespace Project::wizchip::http {
         etl::Future<Response> Options(std::string path, etl::UnorderedMap<std::string, std::string> headers = {}, std::string body = "") {
             return request({.method="OPTIONS", .path=etl::move(path), .version="HTTP/1.1", .headers=etl::move(headers), .body=etl::move(body)}); 
         }
+
+    // private:
+    //     std::string host_port;
     };
 
     struct HeadersBody {

@@ -12,6 +12,7 @@ http::Client::Client(std::string host) : Client(tcp::Client::Args{{}, 0}) {
 
 auto http::Client::request(http::Request req) -> etl::Future<http::Response> {
     req.headers["User-Agent"] = "stm32_wizchip/" WIZCHIP_VERSION;
+    // req.headers["Agent"] = host + ":" 
 
     return tcp::Client::request(req.dump()).then([](etl::Vector<uint8_t> data) {
         return http::Response::parse(etl::move(data));

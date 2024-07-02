@@ -161,9 +161,10 @@ auto Ethernet::getNetInfo() -> const wiz_NetInfo& {
     return netInfo;
 }
 
-void SocketServer::start(int number_of_socket) {
+void SocketServer::start(StartArgs args) {
     auto lock = Ethernet::self->mutex.lock().await();
-    reserved_sockets.reserve(number_of_socket);
+    port = args.port;
+    reserved_sockets.reserve(args.number_of_socket);
 
     int cnt = 0;
     for (auto i in etl::range(_WIZCHIP_SOCK_NUM_)) if (not Ethernet::self->socket_handlers[i].is_busy()) {
@@ -171,7 +172,7 @@ void SocketServer::start(int number_of_socket) {
         reserved_sockets.append(i);
 
         cnt++;
-        if (cnt == number_of_socket) break;
+        if (cnt == args.number_of_socket) break;
     }
 }
 

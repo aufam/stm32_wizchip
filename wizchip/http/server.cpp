@@ -1,21 +1,18 @@
 #include "Ethernet/socket.h"
 #include "wizchip/http/server.h"
-#include "etl/string.h"
-#include <string>
 
 using namespace Project;
 using namespace Project::wizchip;
 
 static auto status_to_string(int status) -> std::string;
 
-auto http::Server::_response_function(etl::Vector<uint8_t> data) -> etl::Vector<uint8_t> {
-    auto request = Request::parse(etl::move(data));
+auto http::Server::response(etl::Vector<uint8_t> data) -> etl::Vector<uint8_t> {
     auto response = Response {};
+    auto thd = osThreadGetId();
+    responses_start_time[thd] = etl::time::now();
 
-    response.version = "HTTP/1.1";
-    for (auto &[header, fn] : global_headers) {
-        response.headers[header] = fn();
-    }
+    auto request = Request::parse(etl::move(data));
+    response.version = request.version;
 
     // handling
     bool handled = false;
@@ -23,8 +20,6 @@ auto http::Server::_response_function(etl::Vector<uint8_t> data) -> etl::Vector<
         auto it = etl::find(router.methods, request.method);
         if (it != router.methods.end() and router.path == request.path.path) {
             response.status = 200;
-            response.headers["Content-Type"] = router.content_type;
-
             router.function(request, response);
             handled = true;
             break;
@@ -33,9 +28,26 @@ auto http::Server::_response_function(etl::Vector<uint8_t> data) -> etl::Vector<
 
     if (not handled) response.status = 404;
     if (response.status_string.empty()) response.status_string = status_to_string(response.status);
-    if (logger) logger(request, response);
 
+    for (auto &[header, fn] : global_headers) {
+        auto head = fn(request, response);
+        if (not head.empty())
+            response.headers[header] = etl::move(head);
+    }
+
+    responses_start_time.remove(thd);
+    
+    if (logger) logger(request, response);
     return response.dump();
+}
+
+auto http::Server::get_elapsed_time() -> etl::Time {
+    auto thd = osThreadGetId();
+    if (responses_start_time.has(thd)) {
+        return etl::time::elapsed(responses_start_time[thd]);
+    } else {
+        return etl::time::immediate;
+    }
 }
 
 static auto status_to_string(int status) -> std::string {

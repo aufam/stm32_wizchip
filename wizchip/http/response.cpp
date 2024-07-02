@@ -6,7 +6,7 @@ using namespace Project;
 using namespace Project::wizchip;
 using namespace Project::etl::literals;
 
-auto wizchip_http_request_response_parse_headers_body(etl::StringView sv) -> etl::Pair<etl::UnorderedMap<std::string, std::string>, std::string>;
+auto wizchip_http_request_response_parse_headers_body(etl::StringView sv, etl::UnorderedMap<std::string, std::string>& headers, std::string& body) -> void;
 
 auto http::Response::parse(etl::Vector<uint8_t> buf) -> Response {
     auto sv = etl::string_view(buf.data(), buf.len());
@@ -22,15 +22,14 @@ auto http::Response::parse(etl::Vector<uint8_t> buf) -> Response {
     sv = status_string.end() + 1;
     if (status_string and status_string.back() == '\r')
         status_string = status_string.substr(0, status_string.len() - 1);
-
-    auto [headers, body] = wizchip_http_request_response_parse_headers_body(sv);
-    return {
-        .version=std::string(version.data(), version.len()),
-        .status=status,
-        .status_string=std::string(status_string.data(), status_string.len()),
-        .headers=etl::move(headers),
-        .body=etl::move(body),
-    };
+    
+    Response res;
+    res.version = std::string(version.data(), version.len());
+    res.status = status;
+    res.status_string = std::string(status_string.data(), status_string.len());
+    wizchip_http_request_response_parse_headers_body(sv, res.headers, res.body);
+    
+    return res;
 } 
 
 auto http::Response::dump() const -> etl::Vector<uint8_t> {

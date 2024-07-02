@@ -20,9 +20,9 @@ int udp::Server::on_established(int socket_number) {
         return SOCK_OK;
 
     auto future = etl::async([this, socket_number, data=etl::move(res.unwrap())]() mutable {
-        auto response = response_function(etl::move(data));
+        auto res = this->response(etl::move(data));
         auto lock = Ethernet::self->mutex.lock().await();
-        detail::udp_transmit(socket_number, client_ip, port, etl::move(response));
+        detail::udp_transmit(socket_number, client_ip, port, etl::move(res));
         ::disconnect(socket_number);
     });
     

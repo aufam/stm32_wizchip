@@ -73,23 +73,22 @@ namespace Project::wizchip {
         friend class Ethernet;
         
     public:
-        struct Args {
-            int port;
-            etl::Function<etl::Vector<uint8_t>(etl::Vector<uint8_t>), void*> response_function;
-        };
-
-        constexpr SocketServer(Args args) : port(args.port), response_function(args.response_function) {}
+        constexpr SocketServer() : port(0) {}
 
         /// disable copy constructor and assignment
         SocketServer(const SocketServer&) = delete;
         SocketServer& operator=(const SocketServer&) = delete;
 
-        void start(int number_of_socket = 1);
+        struct StartArgs {
+            int port;
+            int number_of_socket = 1;
+        };
+
+        void start(StartArgs);
         void stop();
         bool isRunning() const;
 
         int port;
-        etl::Function<etl::Vector<uint8_t>(etl::Vector<uint8_t>), void*> response_function;
 
     protected:
         virtual const char* kind() = 0;
@@ -98,6 +97,7 @@ namespace Project::wizchip {
         virtual int on_established(int socket_number) = 0;
         virtual int on_close_wait(int socket_number) = 0;
         virtual int on_closed(int socket_number) = 0;
+        virtual etl::Vector<uint8_t> response(etl::Vector<uint8_t>) = 0;
 
         etl::Vector<int> reserved_sockets;
     };

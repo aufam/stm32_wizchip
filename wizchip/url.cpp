@@ -75,7 +75,6 @@ URL::URL(std::string s) : url(etl::move(s)) {
         this->path = "/";
         this->full_path = "/";
     }
-    this->path = sv_to_string(sv.substr(path.start, path.stop - path.start));
     this->queries = parse_query(sv.substr(que.start, que.stop - que.start));
     this->fragment = sv_to_string(sv.substr(frag.start, frag.stop - frag.start));
 }

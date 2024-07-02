@@ -8,14 +8,6 @@
 namespace Project::wizchip::udp {
     class Server : public SocketServer {
     public:
-        struct Args {
-            int port;
-            etl::Vector<uint8_t> client_ip;
-            etl::Function<etl::Vector<uint8_t>(etl::Vector<uint8_t>), void*> response_function;
-        };
-
-        Server(Args args) : SocketServer(SocketServer::Args{args.port, args.response_function}), client_ip(args.client_ip) {}
-        
         etl::Vector<uint8_t> client_ip;
 
     protected:

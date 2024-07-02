@@ -1,10 +1,12 @@
-# Wizchip interface for STM32
-Inspired by [cpp-httplib](https://github.com/yhirose/cpp-httplib)
+# STM32 Wizchip
+Wizchip interface for STM32
 
 ## Requirements
 * Arm GNU toolchain
 * cmake minimum version 3.10
-* STM32CubeMx generated code
+* STM32CubeMx generated code with:
+    - FreeRTOS v2
+    - SPI
 
 ## Dependencies
 * [Embedded Template Library](https://github.com/aufam/etl/tree/FreeRTOS)
@@ -14,12 +16,10 @@ Inspired by [cpp-httplib](https://github.com/yhirose/cpp-httplib)
 * Clone this repo to your STM32 project folder. For example:
 ```bash
 git clone https://github.com/aufam/stm32_wizchip.git <your_project_path>/Middlewares/Third_Party/stm32_wizchip
-cd <your_project_path>/Middlewares/Third_Party/stm32_wizchip
 ```
 * Or, if Git is configured, you can add this repo as a submodule:
 ```bash
 git submodule add https://github.com/aufam/stm32_wizchip.git <your_project_path>/Middlewares/Third_Party/stm32_wizchip
-cd <your_project_path>/Middlewares/Third_Party/stm32_wizchip
 git submodule update --init --recursive
 ```
 * Link the library to your project in your CMakeLists.txt file:
@@ -28,11 +28,9 @@ add_subdirectory(Middlewares/Third_Party/stm32_wizchip)
 target_link_libraries(${PROJECT_NAME}.elf wizchip)
 ```
 
-## Example code
-Server:
+## Setup Code
 ```c++
-#include "wizchip/http/server.h"
-#include "etl/json.h"
+#include "wizchip/ethernet.h"
 
 using namespace Project;
 using namespace Project::wizchip;
@@ -43,104 +41,112 @@ auto ethernet = Ethernet ({
     .rst={.port=RESET_GPIO_Port, .pin=RESET_Pin},
     .netInfo={ 
         .mac={0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff},
-        .ip={192, 168, 1, 10},
+        .ip={10, 20, 30, 2},
         .sn={255, 255, 255, 0},
-        .gw={192, 168, 1, 1},
-        .dns={8, 8, 8, 8},
+        .gw={10, 20, 30, 1},
+        .dns={10, 20, 30, 1},
         .dhcp=NETINFO_STATIC,
     },
 });
 
-auto server = http::Server({
-    .port=5000,
-});
-
-void http_server_example() {
+void setup_ethernet() {
     ethernet.init();
-
-    // global headers
-    server.global_headers["Server"] = []() -> std::string {
-        return "stm32-wizchip/" WIZCHIP_VERSION;
-    };
-
-    // print hello
-    server.Get("/hello", "text/plain", [](const http::Request&, http::Response& response) {
-        response.body = "Hello world";
-    });
-
-    // display all routes
-    server.Get("/routes", "application/json", [] (const http::Request&, http::Response& response) {
-        response.body = "[";
-        for (auto &router : server.routers) {
-            response.body += std::string() + "{"
-                "\"method\":\"" + router.method + "\","
-                "\"path\":\"" + router.path + "\","
-                "\"responseContentType\":\"" + router.content_type + "\""
-            "},";
-        }
-        response.body.back() = ']';
-    });
-
-    // extract queries
-    server.Get("/queries", "application/json", [] (const http::Request& request, http::Response& response) {
-        response.body = "{\"path\":\"" + request.path.full_path + "\"}";
-        for (auto &[key, value] : request.path.queries) {
-            response.body.back() = ',';
-            response.body += "\"" + key +"\":\"" + value + "\"}";
-        }
-    });
-
-    // post json 
-    server.Post("/json", "application/json", [] (const http::Request& request, http::Response& response) {
-        auto json = etl::Json::parse(etl::string_view(request.body.c_str(), request.body.size()));
-        auto json_err = json.error_message();
-
-        if (json_err) {
-            response.status = http::StatusBadRequest;
-            response.body = std::string() + "{\"errorJson\":\"" + json_err.data() + "\",\"body\":" + request.body + "\"}";
-        } else {
-            response.body = request.body;
-        }
-    });
-
-    server.start();
 }
 ```
 
-Client:
+## Example HTTP Server
 ```c++
-#include "wizchip/http/client.h"
+#include "wizchip/http/server.h"
 
 using namespace Project;
-using namespace Project::wizchip;
+using namespace Project::wizchip::http;
 
-// create ethernet object
-auto ethernet = Ethernet({
-    .hspi=hspi1,
-    .cs={.port=GPIOA, .pin=GPIO_PIN_4},
-    .rst={.port=GPIOD, .pin=GPIO_PIN_2},
-    .netInfo={ 
-        .mac={0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff},
-        .ip={192, 168, 1, 10},
-        .sn={255, 255, 255, 0},
-        .gw={192, 168, 1, 1},
-        .dns={8, 8, 8, 8},
-        .dhcp=NETINFO_STATIC,
-    },
-});
+Server app;
 
-void http_client_example() {
-    ethernet.init();
-    
-    auto client = http::Client({
-        .host={192, 168, 1, 11},
-        .port=8080,
+// example custom struct
+struct Foo {
+    int num;
+    std::string text;
+};
+
+JSON_DEFINE(Foo, 
+    JSON_ITEM("num", num), 
+    JSON_ITEM("text", text)
+)
+
+void setup_http_server() {
+    // example: set additional global headers
+    app.global_headers["Server"] = [](const Request&, const Response&) { 
+        return "stm32-wizchip/" WIZCHIP_VERSION; 
+    };
+
+    // example: print hello
+    app.Get("/hello", {}, 
+    []() -> const char* {
+        return "Hello world from stm32-wizchip/" WIZCHIP_VERSION;
     });
 
-    // example get request
-    http::Response response1 = client.Get("/api").await().unwrap();
+    // example: - get request param (in this case the body as string_view), - possible error return value
+    app.Post("/body", std::tuple{arg::body},
+    [](std::string_view body) -> etl::Result<std::string_view, Server::Error> {
+        if (body.empty()) {
+            return etl::Err(Server::Error{StatusBadRequest, "Body is empty"});
+        } else {
+            return etl::Ok(body);
+        }
+    });
 
-    // example post request with body
-    http::Response response2 = client.Post("/api/2/valid", "Content-Type: text/plain", "Hello").await().unwrap();
+    static const char* const access_token = "1234";
+    
+    auto get_token = [](const Request& req) -> etl::Result<std::string_view, Server::Error> {
+        std::string_view token = "";
+        if (req.headers.has("Authentication")) {
+            token = req.headers["Authentication"];
+        } else if (req.headers.has("authentication")) {
+            token = req.headers["authentication"];
+        } else {
+            return etl::Err(Server::Error{StatusUnauthorized, "No auth provided"});
+        }
+        if (token == std::string("Bearer ") + access_token) {
+            return etl::Ok(token);
+        } else {
+            return etl::Err(Server::Error{StatusUnauthorized, "Token doesn't match"});
+        }
+    };
+
+    // example: 
+    // - adding dependency (in this case is authentication token), 
+    // - arg with default value, it will try to find "add" key in the request headers and request queries. 
+    //   If not found, use the default value
+    // - json deserialize request body to Foo
+    app.Post("/foo", std::tuple{arg::depends(get_token), arg::default_val("add", 20), arg::json},
+    [](std::string_view token, int add, Foo foo) -> Foo {
+        return {foo.num + add, foo.text + ": " + std::string(token)}; 
+    });
+
+    // example:
+    // multiple methods handler
+    app.route("/methods", {"GET", "POST"}, std::tuple{arg::method},
+    [](std::string_view method) {
+        if (method == "GET") {
+            return "Example GET method";
+        } else {
+            return "Example POST method";
+        }
+    });
+
+    // example: print all headers
+    app.Get("/headers", std::tuple{arg::headers},
+    [](etl::Ref<const etl::UnorderedMap<std::string, std::string>> headers) {
+        return headers;
+    });
+
+    // example: print all queries
+    app.Get("/queries", std::tuple{arg::queries},
+    [](etl::Ref<const etl::UnorderedMap<std::string, std::string>> queries) {
+        return queries;
+    });
+
+    app.start({.port=5000, .number_of_socket=4});
 }
 ```
