@@ -16,14 +16,22 @@ int tcp::Server::on_listen(int) {
 
 int tcp::Server::on_established(int socket_number) {
     auto res = detail::tcp_receive(socket_number);
-    if (res.is_err())
-        return SOCK_OK;
+    if (res.is_err()) {
+        auto err = res.unwrap_err();
+        if (err == osErrorNoMemory) {
+            return SOCKERR_BUFFER;
+        } else {
+            return SOCK_OK;
+        }
+    }
 
     auto future = etl::async([this, socket_number, data=etl::move(res.unwrap())]() mutable {
-        auto res = this->response(etl::move(data));
+        auto res = this->response(socket_number, etl::move(data));
         auto lock = Ethernet::self->mutex.lock().await();
-        detail::tcp_transmit(socket_number, etl::move(res));
-        ::disconnect(socket_number);
+        res >> [socket_number](etl::Iter<const uint8_t*> data) {
+            ::send(socket_number, const_cast<uint8_t*>(&(*data)), data.len());
+        };
+        // ::disconnect(socket_number);
     });
     
     // no thread available

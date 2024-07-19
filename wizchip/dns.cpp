@@ -1,52 +1,39 @@
 #include "wizchip/dns.h"
-#include "wizchip/udp.h"
+#include "wizchip/udp/client.h"
 #include "etl/keywords.h"
 
-using namespace Project::wizchip;
+using namespace wizchip;
 
+static auto make_query(const std::string& domain) -> Stream {
+    static const uint8_t start_bytes[] = {
+        0x11, 0x22, // message id
+        0x01, 0x00, // recursion desired
+        0x00, 0x01,
+        0x00, 0x00,
+        0x00, 0x00,
+        0x00, 0x00,
+    };
 
-static auto make_query(const std::string& domain) -> etl::Vector<uint8_t> {
+    static const uint8_t stop_bytes[] = {
+        0x00, // null terminator
+        0x00, 0x01, // type
+        0x00, 0x01, // class
+    };
+
     auto labels = etl::string_view(domain.c_str()).split<8>(".");
-    auto res = etl::vector_reserve<uint8_t>(12 + domain.size() + 2 + 4);
-
-    // message id
-    res.append(0x11);
-    res.append(0x22);
-
-    // recursion desired
-    res.append(0x01);
-    res.append(0x00);
-
-    res.append(0x00);
-    res.append(0x01);
-    
-    res.append(0x00);
-    res.append(0x00);
-    
-    res.append(0x00);
-    res.append(0x00);
-    
-    res.append(0x00);
-    res.append(0x00);
+    auto data = etl::vector_reserve<uint8_t>(labels.len() + domain.size());
 
     for (auto label in labels) {
-        res.append(label.len());
+        data.append(label.len());
         for (auto ch in label) {
-            res.append(ch);
+            data.append(ch);
         }
     }
 
-    res.append(0x00); // null terminator
+    Stream s;
+    s << etl::iter(start_bytes) << [data=mv | data]() { return data.iter(); } << etl::iter(stop_bytes);
 
-    // type
-    res.append(0x00);
-    res.append(0x01); 
-
-    // class
-    res.append(0x00);
-    res.append(0x01); 
-
-    return res;
+    return s;
 }
 
 static auto parse_data(const etl::Vector<uint8_t>& message) -> etl::Result<etl::Vector<uint8_t>, osStatus_t> {
@@ -65,7 +52,7 @@ static auto parse_data(const etl::Vector<uint8_t>& message) -> etl::Result<etl::
     return etl::Err(osErrorNoMemory);
 }
 
-auto dns::get_ip(std::string domain) -> etl::Future<etl::Vector<uint8_t>> {
+auto dns::get_ip(const std::string& domain) -> etl::Future<etl::Vector<uint8_t>> {
     return udp::request(etl::vectorize<uint8_t>(Ethernet::self->getNetInfo().dns), 53, make_query(domain))
         .and_then([](etl::Vector<uint8_t> received_data) {
             return parse_data(received_data);

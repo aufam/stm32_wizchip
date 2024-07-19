@@ -4,9 +4,7 @@
 #include "etl/heap.h"
 #include "etl/keywords.h"
 
-using namespace Project;
-using namespace Project::etl::literals;
-using namespace Project::wizchip;
+using namespace wizchip;
 
 Ethernet* Ethernet::self = nullptr;
 auto static f = etl::string<64>();
@@ -234,48 +232,48 @@ auto detail::ipv4_port_to_pair(const char* ip_port) -> etl::Pair<etl::Vector<uin
     return {etl::move(ip), port};
 }
 
-auto detail::tcp_transmit(int socket_number, etl::Vector<uint8_t> data) -> etl::Result<void, osStatus_t> {
-    auto res = ::send(socket_number, data.data(), data.size());
-    if (res < 0) return etl::Err(osStatus_t(res));
+void detail::tcp_receive_to(int socket_number, uint8_t* buf, size_t n) {
+    while (n > 0) {
+        auto len = ::getSn_RX_RSR(socket_number);
+        if (len == 0) {
+            etl::this_thread::sleep(10ms);
+            continue;
+        }
 
-    // Check the TX socket buffer for End of tcp response sends
-    int retry = 0;
-    while (getSn_TX_FSR(socket_number) != (getSn_TxMAX(socket_number))) {
-        etl::this_thread::sleep(1ms);
-        retry++;
-        if (retry == 100) break;
+        len = etl::min(n, len);
+        ::recv(socket_number, buf, len);
+        n -= len;
     }
-
-    return etl::Ok();
 }
 
 auto detail::tcp_receive(int socket_number) -> etl::Result<etl::Vector<uint8_t>, osStatus_t> {
-    auto res = etl::vector<uint8_t>();
-    while (true) {
-        size_t len = getSn_RX_RSR(socket_number);
-        if (len == 0) break;
+    size_t len = ::getSn_RX_RSR(socket_number);
+    if (len == 0 || etl::heap::freeSize < len) {
+        return etl::Err(osErrorNoMemory);
+    }
 
-        if (etl::heap::freeSize < len + res.len()) {
+    auto res = etl::vector_allocate<uint8_t>(len);
+    ::recv(socket_number, res.data(), len);
+
+    while (len == 2048) {
+        etl::this_thread::sleep(10ms);
+        size_t len2 = ::getSn_RX_RSR(socket_number);
+        if (etl::heap::freeSize < len) {
             return etl::Err(osErrorNoMemory);
         }
 
-        auto res_new = etl::vector_allocate<uint8_t>(len + res.len());
-        ::memcpy(res_new.data(), res.data(), res.len());
+        auto res2 = etl::vector_allocate<uint8_t>(len + len2);
+        ::memcpy(res2.data(), res.data(), res.len());
+        ::recv(socket_number, res2.data() + res.len(), len2);
         
-        ::recv(socket_number, res_new.data() + res.len(), len);
-        res = etl::move(res_new);
+        res = mv | res2;
+        len = len2;
     }
 
-    if (res.len() == 0) return etl::Err(osError);
-    else return etl::Ok(etl::move(res));
-}
-
-auto detail::udp_transmit(int socket_number, etl::Vector<uint8_t> ip, int port, etl::Vector<uint8_t> data) -> etl::Result<void, osStatus_t> {
-    auto res = ::sendto(socket_number, data.data(), data.len(), ip.data(), port);
-    if (res > 0) {
-        return etl::Ok();
+    if (res.len() == 0) {
+        return etl::Err(osError);
     } else {
-        return etl::Err(osStatus_t(res));
+        return etl::Ok(mv | res);
     }
 }
 

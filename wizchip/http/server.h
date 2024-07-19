@@ -6,7 +6,6 @@
 #include "wizchip/http/response.h"
 #include "etl/json_serialize.h"
 #include "etl/json_deserialize.h"
-#include <functional>
 
 namespace Project::wizchip::http {
     class Server : public tcp::Server {
@@ -14,15 +13,18 @@ namespace Project::wizchip::http {
         using RouterFunction = std::function<void(const Request&, Response&)>;
         using HeaderGenerator = etl::UnorderedMap<std::string, std::function<std::string(const Request&, const Response&)>>;
 
+        struct Error {
+            int status;
+            std::string what = "";
+        };
+
+        template <typename T>
+        using Result = etl::Result<T, Error>;
+
         struct Router {
             std::string path;
             etl::Vector<const char*> methods;
             RouterFunction function;
-        };
-
-        struct Error {
-            int status;
-            std::string what;
         };
 
         template <typename T>
@@ -35,14 +37,14 @@ namespace Project::wizchip::http {
             static constexpr bool is_return_type_result = false;
             using value_type = T;
         };
-    
-        template <typename T> struct is_router_result : etl::false_type {};
-        template <typename T> struct is_router_result<etl::Result<T, Error>> : etl::true_type {};
-        template <typename T> static constexpr bool is_router_result_v = is_router_result<T>::value;
         
         template <typename T> struct router_result;
-        template <typename T> struct router_result<etl::Result<T, Error>> { using value_type = T; };
+        template <typename T> struct router_result<Result<T>> { using value_type = T; };
         template <typename T> using router_result_t = typename router_result<T>::value_type;
+    
+        template <typename T> struct is_router_result : etl::false_type {};
+        template <typename T> struct is_router_result<Result<T>> : etl::true_type {};
+        template <typename T> static constexpr bool is_router_result_v = is_router_result<T>::value;
 
         template <typename... Args, typename F> 
         auto route(std::string path, etl::Vector<const char*> methods, std::tuple<RouterArg<Args>...> args, F&& handler) {
@@ -93,12 +95,11 @@ namespace Project::wizchip::http {
         std::function<void(const Request&, const Response&)> logger = {};
         std::function<void(Error, const Request&, Response&)> error_handler = default_error_handler;
         etl::LinkedList<Router> routers;
+        const char* name = "stm32-wizchip/" WIZCHIP_VERSION;
+        bool show_response_time = false;
 
-        etl::Time get_elapsed_time();
-    
     protected:
-        etl::Vector<uint8_t> response(etl::Vector<uint8_t>) override;
-        etl::UnorderedMap<void*, etl::Time> responses_start_time;
+        Stream response(int socket_number, etl::Vector<uint8_t> data) override;
 
         template <typename... RouterArgs, typename R, typename ...HandlerArgs>
         auto route_(
@@ -111,8 +112,8 @@ namespace Project::wizchip::http {
 
             RouterFunction function = [this, args=etl::move(args), handler] (const Request& req, Response& res) {
                 // process each args
-                std::tuple<etl::Result<HandlerArgs, Error>...> arg_values = std::apply([&](const auto&... items) {
-                    return std::tuple { process_arg<HandlerArgs>(items, req)... };
+                std::tuple<Result<HandlerArgs>...> arg_values = std::apply([&](const auto&... items) {
+                    return std::tuple { process_arg<HandlerArgs>(items, req, res)... };
                 }, args);
 
                 // check for err
@@ -138,10 +139,10 @@ namespace Project::wizchip::http {
                             return error_handler(etl::move(result.unwrap_err()), req, res);
                         }
                         if constexpr (not etl::is_same_v<router_result_t<R>, void>) {
-                            process_result(result.unwrap(), res);
+                            process_result(result.unwrap(), req, res);
                         }
                     } else {
-                        process_result(result, res);
+                        process_result(result, req, res);
                     }
                 } 
             };
@@ -159,24 +160,31 @@ namespace Project::wizchip::http {
             return {StatusInternalServerError, std::string(err)};
         }
         
-        template <typename T, typename Arg> static etl::Result<T, Error>
-        process_arg(const RouterArg<Arg>& arg, const Request& req) {
+        template <typename T, typename Arg> static Result<T>
+        process_arg(const RouterArg<Arg>& arg, const Request& req, Response& res) {
             static_assert(etl::is_same_v<Arg, void> || etl::is_same_v<typename RouterArg<Arg>::value_type, T>);
             const std::string key = arg.name;
             if (key[0] == '$') {
                 return get_request_parameter<T>(key, req);
             } else if (req.headers.has(key)) {
-                return convert_std_string_to_any<T>(req.headers[key]);
+                return convert_string_into<T>(req.headers[key]);
             } else if (req.path.queries.has(key)) {
-                return convert_std_string_to_any<T>(req.path.queries[key]);
+                return convert_string_into<T>(req.path.queries[key]);
             } else {
+                if (arg.name && arg.name[0] != '\0' && get_content_type(req) == "application/json") {
+                    auto arg_val = etl::Json::parse(etl::StringView{req.body.data(), req.body.size()})[arg.name];
+                    if (arg_val) {
+                        auto sv = arg_val.dump();
+                        return convert_string_into<T>({sv.data(), sv.len()});
+                    }
+                }
                 if constexpr (RouterArg<Arg>::has_default) {
                     if constexpr (RouterArg<Arg>::is_function) {
                         if constexpr (RouterArg<Arg>::has_request_param) {
                             if constexpr (RouterArg<Arg>::is_return_type_result) {
-                                return arg.get_default(req);
+                                return arg.get_default(req, res);
                             } else {
-                                return etl::Ok(arg.get_default(req));
+                                return etl::Ok(arg.get_default(req, res));
                             }
                         } else {
                             if constexpr (RouterArg<Arg>::is_return_type_result) {
@@ -195,7 +203,7 @@ namespace Project::wizchip::http {
         }
 
         template <typename T> static void
-        process_result(T& result, Response& res) {
+        process_result(T& result, const Request&, Response& res) {
             if constexpr (etl::is_same_v<T, std::string>) {
                 res.body = etl::move(result);
                 res.headers["Content-Type"] = "text/plain";
@@ -208,16 +216,33 @@ namespace Project::wizchip::http {
             } else if constexpr (etl::is_same_v<T, etl::StringView>) {
                 res.body = std::string(result.data(), result.len());
                 res.headers["Content-Type"] = "text/plain";
+            } else if constexpr (etl::is_same_v<T, Response>) {
+                res = etl::move(result);
             } else {
                 res.body = etl::json::serialize(result);
                 res.headers["Content-Type"] = "application/json";
             }
         }
+
+        static std::string_view
+        get_content_type(const Request& req) {
+            if (req.headers.has("Content-Type")) {
+                return req.headers["Content-Type"];
+            } else if (req.headers.has("content-type")) {
+                return req.headers["content-type"];
+            } else {
+                return "";
+            }
+        }
         
-        template <typename T> static etl::Result<T, Error>
+        template <typename T> static Result<T>
         get_request_parameter(const std::string& key, const Request& req) {
             if (key == "$request") {
-                return get_request<T>(req);
+                if constexpr (etl::is_same_v<T, etl::Ref<const Request>>) {
+                    return etl::Ok(etl::ref_const(req));
+                } else {
+                    return etl::Err(internal_error("arg type $request must be etl::Ref<const Request>"));
+                }
             } else if (key == "$url") {
                 return get_url<T>(req);
             } else if (key == "$headers") {
@@ -225,48 +250,30 @@ namespace Project::wizchip::http {
             } else if (key == "$queries") {
                 return get_queries<T>(req);
             } else if (key == "$path") {
-                return convert_std_string_to_other_string<T>(req.path.path);
+                return convert_string_into<T>(req.path.path);
             } else if (key == "$full_path") {
-                return convert_std_string_to_other_string<T>(req.path.full_path);
+                return convert_string_into<T>(req.path.full_path);
             } else if (key == "$fragment") {
-                return convert_std_string_to_other_string<T>(req.path.fragment);
+                return convert_string_into<T>(req.path.fragment);
             } else if (key == "$version") {
-                return convert_std_string_to_other_string<T>(req.version);
+                return convert_string_into<T>(req.version);
             } else if (key == "$method") {
-                return convert_std_string_to_other_string<T>(req.method);
+                return convert_string_into<T>(req.method);
             } else if (key == "$body") {
-                return convert_std_string_to_other_string<T>(req.body);
+                return convert_string_into<T>(req.body);
             } else {
-                std::string_view content_type = [&]() -> std::string_view {
-                    if (req.headers.has("Content-Type")) {
-                        return req.headers["Content-Type"];
-                    } else if (req.headers.has("content-type")) {
-                        return req.headers["content-type"];
-                    } else {
-                        return "";
-                    }
-                }();
-
+                auto content_type = get_content_type(req);
                 if (key == "$json" && content_type == "application/json") {
-                    return get_json<T>(req.body);
+                    return convert_string_into<T>(req.body);
                 } else if (key == "$text" && content_type == "text/plain") {
-                    return convert_std_string_to_other_string<T>(req.body);
+                    return convert_string_into<T>(req.body);
                 } else {
                     return etl::Err(internal_error("unknown arg"));
                 }
             } 
         }
 
-        template <typename T> static etl::Result<T, Error>
-        get_request(const Request& req) {
-            if constexpr (etl::is_same_v<T, etl::Ref<const Request>>) {
-                return etl::Ok(etl::ref_const(req));
-            } else {
-                return etl::Err(internal_error("arg type $request must be etl::Ref<const Request>"));
-            }
-        }
-
-        template <typename T> static etl::Result<T, Error>
+        template <typename T> static Result<T>
         get_url(const Request& req) {
             if constexpr (etl::is_same_v<T, etl::Ref<const URL>>) {
                 return etl::Ok(etl::ref_const(req.path));
@@ -275,7 +282,7 @@ namespace Project::wizchip::http {
             }
         }
 
-        template <typename T> static etl::Result<T, Error>
+        template <typename T> static Result<T>
         get_headers(const Request& req) {
             if constexpr (etl::is_same_v<T, etl::Ref<const decltype(Request::headers)>>) {
                 return etl::Ok(etl::ref_const(req.headers));
@@ -284,7 +291,7 @@ namespace Project::wizchip::http {
             }
         }
 
-        template <typename T> static etl::Result<T, Error>
+        template <typename T> static Result<T>
         get_queries(const Request& req) {
             if constexpr (etl::is_same_v<T, etl::Ref<const decltype(URL::queries)>>) {
                 return etl::Ok(etl::ref_const(req.path.queries));
@@ -293,31 +300,16 @@ namespace Project::wizchip::http {
             }
         }
 
-        template <typename T> static etl::Result<T, Error>
-        get_json(const std::string& str) {
-            return etl::json::deserialize<T>(str).except(internal_error);
-        }
-
-        template <typename T> static etl::Result<T, Error> 
-        convert_std_string_to_other_string(const std::string& str) {
+        template <typename T> static Result<T> 
+        convert_string_into(std::string_view str) {
             if constexpr (etl::is_same_v<T, std::string> || etl::is_same_v<T, std::string_view> || etl::is_same_v<T, etl::StringView>) {
                 return etl::Ok(T(str.data(), str.size()));
             } else if constexpr (etl::is_string_v<T>) {
                 return etl::Ok(T("%.*s", str.size(), str.data()));
             } else if constexpr (etl::is_same_v<T, const char*>) {
-                return etl::Ok(str.c_str());
+                return etl::Ok(str.data());
             } else {
-                return etl::Err(internal_error("cannot convert to string"));
-            }
-        }
-
-        template <typename T> static etl::Result<T, Error> 
-        convert_std_string_to_any(const std::string& str) {
-            etl::Result<T, Error> res = convert_std_string_to_other_string<T>(str);
-            if (res.is_ok()) {
-                return res;
-            } else {
-                return get_json<T>(str);
+                return etl::json::deserialize<T>(str).except(internal_error);
             }
         }
     };
@@ -345,9 +337,9 @@ namespace Project::wizchip::http {
     };
 
     template <typename T>
-    struct Server::RouterArg<std::function<etl::Result<T, Server::Error>()>> {
+    struct Server::RouterArg<std::function<Server::Result<T>()>> {
         const char* name;
-        std::function<etl::Result<T, Error>()> get_default;
+        std::function<Result<T>()> get_default;
         static constexpr bool has_default = true;
         static constexpr bool is_function = true;
         static constexpr bool has_request_param = false;
@@ -356,9 +348,9 @@ namespace Project::wizchip::http {
     };
 
     template <typename T>
-    struct Server::RouterArg<std::function<T(const Request&)>> {
+    struct Server::RouterArg<std::function<T(const Request&, Response&)>> {
         const char* name;
-        std::function<T(const Request&)> get_default;
+        std::function<T(const Request&, Response&)> get_default;
         static constexpr bool has_default = true;
         static constexpr bool is_function = true;
         static constexpr bool has_request_param = true;
@@ -367,9 +359,9 @@ namespace Project::wizchip::http {
     };
 
     template <typename T>
-    struct Server::RouterArg<std::function<etl::Result<T, Server::Error>(const Request&)>> {
+    struct Server::RouterArg<std::function<Server::Result<T>(const Request&, Response&)>> {
         const char* name;
-        std::function<etl::Result<T, Error>(const Request&)> get_default;
+        std::function<Result<T>(const Request&, Response&)> get_default;
         static constexpr bool has_default = true;
         static constexpr bool is_function = true;
         static constexpr bool has_request_param = true;
@@ -379,9 +371,6 @@ namespace Project::wizchip::http {
 }
 
 namespace Project::wizchip::http::arg {
-    template <typename... Args>
-    using args = std::tuple<Args...>;
-
     inline auto arg(const char* name) {
         return Server::RouterArg<void> {name};
     }

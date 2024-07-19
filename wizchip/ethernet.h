@@ -2,17 +2,17 @@
 #define WIZCHIP_ETHERNET_H
 
 #include "wizchip_conf.h"
-#include "Core/Inc/spi.h"
+#include "spi.h"
 #include "periph/gpio.h"
 #include "etl/mutex.h"
 #include "etl/vector.h"
 #include "etl/future.h"
+#include "wizchip/stream.h"
 
 namespace Project::wizchip {
     class SocketServer;
     class SocketSession;
 
-    /// Represents an Ethernet interface for network communication.
     [[singleton]]
     class Ethernet {
         friend class SocketServer;
@@ -67,8 +67,8 @@ namespace Project::wizchip {
         };
         SocketHandler socket_handlers[_WIZCHIP_SOCK_NUM_] = {};
     };
-
-    /// Represents a socket for network communication.
+    
+    [[interface]]
     class SocketServer {
         friend class Ethernet;
         
@@ -97,11 +97,12 @@ namespace Project::wizchip {
         virtual int on_established(int socket_number) = 0;
         virtual int on_close_wait(int socket_number) = 0;
         virtual int on_closed(int socket_number) = 0;
-        virtual etl::Vector<uint8_t> response(etl::Vector<uint8_t>) = 0;
+        virtual Stream response(int socket_number, etl::Vector<uint8_t>) = 0;
 
         etl::Vector<int> reserved_sockets;
     };
 
+    [[interface]]
     class SocketSession {
         friend class Ethernet;
     
@@ -112,6 +113,8 @@ namespace Project::wizchip {
         etl::Vector<uint8_t> host;
         int port;
         int socket_number;
+
+        virtual etl::Future<etl::Vector<uint8_t>> request(Stream s) = 0;
     };
 } 
 
@@ -119,10 +122,8 @@ namespace Project::wizchip::detail {
     etl::Vector<uint8_t> ipv4_to_bytes(const char* ip);
     etl::Pair<etl::Vector<uint8_t>, uint16_t> ipv4_port_to_pair(const char* ip_port);
     
-    etl::Result<void, osStatus_t> tcp_transmit(int socket_number, etl::Vector<uint8_t> data);
     etl::Result<etl::Vector<uint8_t>, osStatus_t> tcp_receive(int socket_number);
-
-    etl::Result<void, osStatus_t> udp_transmit(int socket_number, etl::Vector<uint8_t> ip, int port, etl::Vector<uint8_t> data);
+    void tcp_receive_to(int socket_number, uint8_t* buf, size_t n);
     etl::Result<etl::Vector<uint8_t>, osStatus_t> udp_receive(int socket_number, etl::Vector<uint8_t> ip);
 }
 

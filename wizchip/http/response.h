@@ -1,6 +1,7 @@
 #ifndef WIZCHIP_HTTP_RESPONSE_H
 #define WIZCHIP_HTTP_RESPONSE_H
 
+#include "wizchip/stream.h"
 #include <etl/vector.h>
 #include <etl/unordered_map.h>
 #include <etl/string_view.h>
@@ -9,8 +10,7 @@
 namespace Project::wizchip::http {
     struct Response {
         static Response parse(etl::Vector<uint8_t> buf);
-        etl::Vector<uint8_t> dump() const;
-        void set_content(std::string content, std::string content_type);
+        Stream dump();
 
         std::string version;
         int status;

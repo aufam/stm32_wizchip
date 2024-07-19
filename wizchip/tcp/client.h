@@ -13,11 +13,9 @@ namespace Project::wizchip::tcp {
         };
 
         Client(Args args) : SocketSession(Sn_MR_TCP, 0, args.host, args.port) {}
-
-        etl::Future<etl::Vector<uint8_t>> request(etl::Vector<uint8_t> data);
+        etl::Future<etl::Vector<uint8_t>> request(Stream s) override;
+        etl::Future<Stream> request_test(Stream s);
     };
-
-    etl::Future<etl::Vector<uint8_t>> request(etl::Vector<uint8_t> host, int port, etl::Vector<uint8_t> data);
 } 
 
 #endif // WIZCHIP_TCP_CLIENT_H

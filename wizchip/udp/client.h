@@ -15,8 +15,10 @@ namespace Project::wizchip::udp {
 
         Client(Args args) : SocketSession(Sn_MR_UDP, 0, args.host, args.port) {}
 
-        etl::Future<etl::Vector<uint8_t>> request(etl::Vector<uint8_t> data);
+        etl::Future<etl::Vector<uint8_t>> request(Stream data) override;
     };
+
+    etl::Future<etl::Vector<uint8_t>> request(etl::Vector<uint8_t> host, int port, Stream data);
 }
 
 #endif // WIZCHIP_UDP_CLIENT_H

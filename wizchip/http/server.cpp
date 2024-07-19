@@ -1,53 +1,76 @@
 #include "Ethernet/socket.h"
 #include "wizchip/http/server.h"
+#include "etl/heap.h"
 
 using namespace Project;
 using namespace Project::wizchip;
 
 static auto status_to_string(int status) -> std::string;
 
-auto http::Server::response(etl::Vector<uint8_t> data) -> etl::Vector<uint8_t> {
-    auto response = Response {};
-    auto thd = osThreadGetId();
-    responses_start_time[thd] = etl::time::now();
+auto http::Server::response(int socket_number, etl::Vector<uint8_t> data) -> Stream {
+    auto start_time = etl::time::now();
+    bool no_memory = false;
+    bool handled = false;
 
+    auto response = Response {};
     auto request = Request::parse(etl::move(data));
+
+    int len = 0;
+    if (request.headers.has("Content-Length")) {
+        len = etl::string_view(request.headers["Content-Length"].c_str()).to_int() - request.body.size();
+    } else if (request.headers.has("content-length")) {
+        len = etl::string_view(request.headers["content-length"].c_str()).to_int() - request.body.size();
+    }
+
+    if (int(etl::heap::freeSize) < len) {
+        no_memory = true;
+    } else if (len > 0) {
+        auto body_size = response.body.size();
+        request.body.resize(body_size + len);
+        detail::tcp_receive_to(socket_number, reinterpret_cast<uint8_t*>(&request.body[body_size]), len);
+    } else if (len < 0) {
+        request.body.resize(request.body.size() + len);
+    }
+
+    // TODO: version handling
     response.version = request.version;
 
-    // handling
-    bool handled = false;
-    for (auto &router : routers) {
-        auto it = etl::find(router.methods, request.method);
-        if (it != router.methods.end() and router.path == request.path.path) {
-            response.status = 200;
-            router.function(request, response);
-            handled = true;
-            break;
+    // body handling
+    if (no_memory) {
+        response.status = StatusInternalServerError;
+    } else {
+        for (auto &router : routers) {
+            if (router.path == request.path.path) {
+                auto it = etl::find(router.methods, request.method);
+                if (it == router.methods.end()) {
+                    response.status = StatusMethodNotAllowed;
+                } else {
+                    response.status = StatusOK;
+                    router.function(request, response);
+                }
+                handled = true;
+                break;
+            }
+        }
+    
+        if (not handled) {
+            response.status = StatusNotFound;
         }
     }
 
-    if (not handled) response.status = 404;
+    // generate payload
     if (response.status_string.empty()) response.status_string = status_to_string(response.status);
+    if (not response.body.empty()) response.headers["Content-Length"] = std::to_string(response.body.size());
+    if (name) response.headers["Server"] = name;
+    if (show_response_time) response.headers["X-Response-Time"] = std::to_string(etl::time::elapsed(start_time).tick) + "ms";
 
     for (auto &[header, fn] : global_headers) {
         auto head = fn(request, response);
-        if (not head.empty())
-            response.headers[header] = etl::move(head);
+        if (not head.empty()) response.headers[header] = etl::move(head);
     }
 
-    responses_start_time.remove(thd);
-    
     if (logger) logger(request, response);
     return response.dump();
-}
-
-auto http::Server::get_elapsed_time() -> etl::Time {
-    auto thd = osThreadGetId();
-    if (responses_start_time.has(thd)) {
-        return etl::time::elapsed(responses_start_time[thd]);
-    } else {
-        return etl::time::immediate;
-    }
 }
 
 static auto status_to_string(int status) -> std::string {

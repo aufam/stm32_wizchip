@@ -16,14 +16,22 @@ int udp::Server::on_listen(int socket_number) {
 
 int udp::Server::on_established(int socket_number) {
     auto res = detail::udp_receive(socket_number, client_ip);
-    if (res.is_err())
-        return SOCK_OK;
+    if (res.is_err()) {
+        auto err = res.unwrap_err();
+        if (err == osErrorNoMemory) {
+            return SOCKERR_BUFFER;
+        } else {
+            return SOCK_OK;
+        }
+    }
 
     auto future = etl::async([this, socket_number, data=etl::move(res.unwrap())]() mutable {
-        auto res = this->response(etl::move(data));
+        auto res = this->response(socket_number, etl::move(data));
         auto lock = Ethernet::self->mutex.lock().await();
-        detail::udp_transmit(socket_number, client_ip, port, etl::move(res));
-        ::disconnect(socket_number);
+        res >> [this, socket_number](etl::Iter<const uint8_t*> data) {
+            ::sendto(socket_number, const_cast<uint8_t*>(&(*data)), data.len(), client_ip.data(), port);
+        };
+        // ::disconnect(socket_number);
     });
     
     // no thread available

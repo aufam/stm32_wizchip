@@ -1,12 +1,18 @@
 #include "request.h"
-#include "etl/heap.h"
-#include "etl/thread.h"
+#include "etl/this_thread.h"
+#include "etl/keywords.h"
 
-using namespace Project;
-using namespace Project::wizchip;
-using namespace Project::etl::literals;
+using namespace wizchip;
 
-auto wizchip_http_request_response_parse_headers_body(etl::StringView sv, etl::UnorderedMap<std::string, std::string>& headers, std::string& body) -> void;
+void wizchip_http_request_response_parse_headers_body(
+    etl::StringView sv, 
+    etl::UnorderedMap<std::string, std::string>& headers, 
+    std::string& body
+);
+
+Stream::InRule wizchip_http_request_response_string_to_stream_rule(
+    std::string str
+);
 
 auto http::Request::parse(etl::Vector<uint8_t> buf) -> Request {
     auto sv = etl::string_view(buf.data(), buf.len());
@@ -38,50 +44,40 @@ auto http::Request::parse(etl::Vector<uint8_t> buf) -> Request {
     return req;
 } 
 
-auto http::Request::dump() const -> etl::Vector<uint8_t> {
-    auto total = method.size() + 1 + path.url.size() + 1 + version.size() + 2;
-    for (auto &[key, value] : headers) {
-        total += key.size() + 2 + value.size() + 2;
-    }
-    total += 2 + body.size();
+auto http::Request::dump() -> Stream {
+    static const uint8_t space[] = {' '};
+    static const uint8_t cr_lf[] = {'\r', '\n'};
+    static const uint8_t colon[] = {':', ' '};
 
-    // TODO: some how the body length can't be 0
-    total += etl::max(body.size(), 1u);
-
-    while (total >= etl::heap::freeSize) {
-        etl::this_thread::sleep(1ms);
-    }
-
-    auto res = etl::vector_allocate<uint8_t>(total);
-    auto ptr = reinterpret_cast<char*>(res.data());
-    ptr[total - 1] = '\0';
-
-    auto n = ::snprintf(ptr, total, "%s %s %s\r\n", method.c_str(), path.url.c_str(), version.c_str());
-    if (n < 0) return {};
+    Stream s;
+    s << wizchip_http_request_response_string_to_stream_rule(mv | method);
+    s << etl::iter(space);
+    s << wizchip_http_request_response_string_to_stream_rule(mv | path.url);
+    s << etl::iter(space);
+    s << wizchip_http_request_response_string_to_stream_rule(mv | version);
+    s << etl::iter(cr_lf);
     
-    ptr += n;
-    total -= n;
-
     for (auto &[key, value] : headers) {
-        n = ::snprintf(ptr, total, "%s: %s\r\n", key.c_str(), value.c_str());
-        if (n < 0) return {};
-        
-        ptr += n;
-        total -= n;
+        s << wizchip_http_request_response_string_to_stream_rule(mv | key);
+        s << etl::iter(colon);
+        s << wizchip_http_request_response_string_to_stream_rule(mv | value);
+        s << etl::iter(cr_lf);
     }
 
-    n = ::snprintf(ptr, total, "\r\n");
-    if (n < 0) return {};
-    
-    ptr += n;
-    total -= n;
+    s << etl::iter(cr_lf);
+    if (!body.empty()) {
+        s << wizchip_http_request_response_string_to_stream_rule(mv | body);
+    }
 
-    ::memcpy(ptr, body.data(), body.size());
-
-    return res;
+    return s;
 }
 
-auto wizchip_http_request_response_parse_headers_body(etl::StringView sv, etl::UnorderedMap<std::string, std::string>& headers, std::string& body) -> void {
+
+void wizchip_http_request_response_parse_headers_body(
+    etl::StringView sv, 
+    etl::UnorderedMap<std::string, std::string>& headers, 
+    std::string& body
+) {
     auto head_end = sv.find("\r\n\r\n");
     auto body_start = head_end + 4;
     if (head_end >= sv.len()) {
@@ -94,6 +90,9 @@ auto wizchip_http_request_response_parse_headers_body(etl::StringView sv, etl::U
 
     auto hsv = sv.substr(0, head_end);
     auto body_length = sv.len() - body_start;
+    if (body_length > 0) {
+        body.assign(sv.data() + body_start, body_length);
+    }
 
     for (auto line : hsv.split<16>("\n")) {
         auto kv = line.split<2>(":");
@@ -106,11 +105,15 @@ auto wizchip_http_request_response_parse_headers_body(etl::StringView sv, etl::U
         while (value and value.front() == ' ') 
             value = value.substr(1, value.len() - 1);
         
-        if (key == "Content-Length" or key == "content-length")
-            body_length = value.to_int_or(body_length);
-        
         headers[std::string(key.data(), key.end())] = std::string(value.data(), value.end()); 
     }
+}
 
-    body.assign(sv.data() + body_start, body_length);
+Stream::InRule wizchip_http_request_response_string_to_stream_rule(
+    std::string str
+) {
+    return [str=etl::move(str)]() {
+        auto ptr = reinterpret_cast<const uint8_t*>(str.data());
+        return etl::iter(ptr, ptr + str.size());
+    };
 }

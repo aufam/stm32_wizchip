@@ -1,22 +1,50 @@
 #include "Ethernet/socket.h"
 #include "wizchip/http/client.h"
+#include "etl/heap.h"
+#include "etl/keywords.h"
 
 using namespace Project::wizchip;
-using namespace Project::etl::literals;
 
 http::Client::Client(std::string host) : Client(tcp::Client::Args{{}, 0}) {
     auto [h, p] = detail::ipv4_port_to_pair(host.c_str());
     this->host = etl::move(h);
     this->port = p;
 }
+void debug_cnt(const char* format, size_t s1, size_t s2);
+void debug_str(const char* format, const char* str, size_t len);
 
 auto http::Client::request(http::Request req) -> etl::Future<http::Response> {
     req.headers["User-Agent"] = "stm32_wizchip/" WIZCHIP_VERSION;
-    // req.headers["Agent"] = host + ":" 
+    if (!req.body.empty()) req.headers["Content-Length"] = std::to_string(req.body.size());
+    req.headers["Host"] = std::to_string(host[0]) + '.' + 
+                          std::to_string(host[1]) + '.' + 
+                          std::to_string(host[2]) + '.' + 
+                          std::to_string(host[3]) + ':' + 
+                          std::to_string(port);
 
-    return tcp::Client::request(req.dump()).then([](etl::Vector<uint8_t> data) {
-        return http::Response::parse(etl::move(data));
-    });
+    return tcp::Client::request(req.dump())
+        .and_then([this](etl::Vector<uint8_t> data) -> etl::Result<http::Response, osStatus_t> {
+            auto response = http::Response::parse(mv | data);
+
+            int len = 0;
+            if (response.headers.has("Content-Length")) {
+                len = etl::string_view(response.headers["Content-Length"].c_str()).to_int() - response.body.size();
+            } else if (response.headers.has("content-length")) {
+                len = etl::string_view(response.headers["content-length"].c_str()).to_int() - response.body.size();
+            }
+
+            if (int(etl::heap::freeSize) < len) {
+                return etl::Err(osErrorNoMemory);
+            } else if (len > 0) {
+                auto body_size = response.body.size();
+                response.body.resize(body_size + len);
+                detail::tcp_receive_to(socket_number, reinterpret_cast<uint8_t*>(&response.body[body_size]), len);
+            } else if (len < 0) {
+                response.body.resize(response.body.size() + len);
+            } 
+
+            return etl::Ok(mv | response);
+        });
 }
 
 auto http::request(std::string method, URL url, HeadersBody headers_body) -> etl::Future<Response> {

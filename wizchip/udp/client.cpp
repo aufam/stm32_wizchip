@@ -1,14 +1,14 @@
+#include "Ethernet/socket.h"
 #include "wizchip/udp/client.h"
 #include "etl/keywords.h"
 
-using namespace Project::wizchip;
+using namespace wizchip;
 
-
-auto udp::Client::request(etl::Vector<uint8_t> data) -> etl::Future<etl::Vector<uint8_t>> {
-    return [this, data=etl::move(data)](etl::Time timeout) -> etl::Result<etl::Vector<uint8_t>, osStatus_t> {
-        auto t = detail::udp_transmit(this->socket_number, this->host, this->port, etl::move(data));
-        if (t.is_err()) 
-            return etl::Err(t.unwrap_err());
+auto udp::Client::request(Stream s) -> etl::Future<etl::Vector<uint8_t>> {
+    return [this, s=mv | s](etl::Time timeout) mutable -> etl::Result<etl::Vector<uint8_t>, osStatus_t> {
+        s >> [this](etl::Iter<const uint8_t*> data) {
+            ::sendto(socket_number, const_cast<uint8_t*>(&(*data)), data.len(), host.data(), port);
+        };
         
         size_t retry = timeout.tick;
         while (true) {
@@ -21,5 +21,12 @@ auto udp::Client::request(etl::Vector<uint8_t> data) -> etl::Future<etl::Vector<
         }
 
         return etl::Err(osErrorTimeout);
+    };
+}
+
+auto udp::request(etl::Vector<uint8_t> host, int port, Stream data) -> etl::Future<etl::Vector<uint8_t>> {
+    return [host, port, data=mv | data](etl::Time timeout) mutable -> etl::Result<etl::Vector<uint8_t>, osStatus_t> {
+        auto cli = udp::Client({.host=host, .port=port});
+        return cli.request(mv | data).wait(timeout);
     };
 }

@@ -1,28 +1,28 @@
 #include "Ethernet/socket.h"
 #include "wizchip/tcp/client.h"
+#include "etl/heap.h"
 #include "etl/keywords.h"
 
 using namespace Project::wizchip;
 
+auto tcp::Client::request(Stream s) -> etl::Future<etl::Vector<uint8_t>> {
+    return [this, s=mv | s](etl::Time timeout) mutable -> etl::Result<etl::Vector<uint8_t>, osStatus_t> {
+        auto start_time = etl::time::now();
 
-auto tcp::Client::request(etl::Vector<uint8_t> data) -> etl::Future<etl::Vector<uint8_t>> {
-    return [this, data=etl::move(data)](etl::Time timeout) mutable -> etl::Result<etl::Vector<uint8_t>, osStatus_t> {
-        size_t retry = 0;
-        for (; retry < timeout.tick; ++retry) {
+        for (; etl::time::elapsed(start_time) < timeout;) {
             if (::connect(socket_number, host.data(), port) == SOCK_OK) break; 
             etl::this_thread::sleep(1ms);
         }
 
-        if (retry == timeout.tick) {
+        if (etl::time::elapsed(start_time) >= timeout) {
             return etl::Err(osErrorTimeout);
         }
 
-        auto t = detail::tcp_transmit(socket_number, etl::move(data));
-        if (t.is_err()) {
-            return etl::Err(t.unwrap_err());
-        }
+        s >> [this](etl::Iter<const uint8_t*> data) {
+            ::send(socket_number, const_cast<uint8_t*>(&(*data)), data.len());
+        };
 
-        for (; retry < timeout.tick; ++retry) {
+        for (; etl::time::elapsed(start_time) < timeout;) {
             auto r = detail::tcp_receive(socket_number);
             if (r.is_ok()) return r;
             
@@ -30,13 +30,5 @@ auto tcp::Client::request(etl::Vector<uint8_t> data) -> etl::Future<etl::Vector<
         }
         
         return etl::Err(osErrorTimeout);
-    };
-}
-
-
-auto tcp::request(etl::Vector<uint8_t> host, int port, etl::Vector<uint8_t> data) -> etl::Future<etl::Vector<uint8_t>> {
-    return [host, port, data=etl::move(data)](etl::Time timeout) mutable -> etl::Result<etl::Vector<uint8_t>, osStatus_t> {
-        auto cli = tcp::Client({.host=host, .port=port});
-        return cli.request(etl::move(data)).wait(timeout);
     };
 }
