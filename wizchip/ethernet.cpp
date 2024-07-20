@@ -159,9 +159,18 @@ auto Ethernet::getNetInfo() -> const wiz_NetInfo& {
     return netInfo;
 }
 
-void SocketServer::start(StartArgs args) {
+auto SocketServer::start(StartArgs args) -> etl::Result<void, osStatus_t> {
+    if (isRunning()) {
+        return etl::Err(osErrorResource);
+    }
+
     auto lock = Ethernet::self->mutex.lock().await();
     port = args.port;
+
+    if (etl::heap::freeSize < sizeof(int) * args.number_of_socket) {
+        return etl::Err(osErrorNoMemory);
+    }
+
     reserved_sockets.reserve(args.number_of_socket);
 
     int cnt = 0;
@@ -172,6 +181,8 @@ void SocketServer::start(StartArgs args) {
         cnt++;
         if (cnt == args.number_of_socket) break;
     }
+
+    return etl::Ok();
 }
 
 void SocketServer::stop() {

@@ -84,7 +84,7 @@ namespace Project::wizchip {
             int number_of_socket = 1;
         };
 
-        void start(StartArgs);
+        etl::Result<void, osStatus_t> start(StartArgs);
         void stop();
         bool isRunning() const;
 
