@@ -204,16 +204,10 @@ namespace Project::wizchip::http {
 
         template <typename T> static void
         process_result(T& result, const Request&, Response& res) {
-            if constexpr (etl::is_same_v<T, std::string>) {
+            if constexpr (etl::is_same_v<T, std::string> || etl::is_same_v<T, std::string_view> || etl::is_same_v<T, const char*>) {
                 res.body = etl::move(result);
                 res.headers["Content-Type"] = "text/plain";
-            } else if constexpr (etl::is_string_v<T>) {
-                res.body = std::string(result.data(), result.len());
-                res.headers["Content-Type"] = "text/plain";
-            } else if constexpr (etl::is_same_v<T, std::string_view> || etl::is_same_v<T, const char*>) {
-                res.body = result;
-                res.headers["Content-Type"] = "text/plain";
-            } else if constexpr (etl::is_same_v<T, etl::StringView>) {
+            } else if constexpr (etl::is_etl_string_v<T> || etl::is_same_v<T, etl::StringView>) {
                 res.body = std::string(result.data(), result.len());
                 res.headers["Content-Type"] = "text/plain";
             } else if constexpr (etl::is_same_v<T, Response>) {
@@ -304,7 +298,7 @@ namespace Project::wizchip::http {
         convert_string_into(std::string_view str) {
             if constexpr (etl::is_same_v<T, std::string> || etl::is_same_v<T, std::string_view> || etl::is_same_v<T, etl::StringView>) {
                 return etl::Ok(T(str.data(), str.size()));
-            } else if constexpr (etl::is_string_v<T>) {
+            } else if constexpr (etl::is_etl_string_v<T>) {
                 return etl::Ok(T("%.*s", str.size(), str.data()));
             } else if constexpr (etl::is_same_v<T, const char*>) {
                 return etl::Ok(str.data());
