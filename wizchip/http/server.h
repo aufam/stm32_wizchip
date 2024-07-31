@@ -165,7 +165,7 @@ namespace Project::wizchip::http {
             static_assert(etl::is_same_v<Arg, void> || etl::is_same_v<typename RouterArg<Arg>::value_type, T>);
             const std::string key = arg.name;
             if (key[0] == '$') {
-                return get_request_parameter<T>(key, req);
+                return get_parameter<T>(key, req, res);
             } else if (req.headers.has(key)) {
                 return convert_string_into<T>(req.headers[key]);
             } else if (req.path.queries.has(key)) {
@@ -230,14 +230,21 @@ namespace Project::wizchip::http {
         }
         
         template <typename T> static Result<T>
-        get_request_parameter(const std::string& key, const Request& req) {
+        get_parameter(const std::string& key, const Request& req, Response& res) {
             if (key == "$request") {
                 if constexpr (etl::is_same_v<T, etl::Ref<const Request>>) {
                     return etl::Ok(etl::ref_const(req));
                 } else {
                     return etl::Err(internal_error("arg type $request must be etl::Ref<const Request>"));
                 }
-            } else if (key == "$url") {
+            } else if (key == "$response") {
+                if constexpr (etl::is_same_v<T, etl::Ref<Response>>) {
+                    return etl::Ok(etl::ref(res));
+                } else {
+                    return etl::Err(internal_error("arg type $request must be etl::Ref<Response>"));
+                }
+            }
+            else if (key == "$url") {
                 return get_url<T>(req);
             } else if (key == "$headers") {
                 return get_headers<T>(req);
@@ -387,6 +394,7 @@ namespace Project::wizchip::http::arg {
     }
 
     inline static constexpr Server::RouterArg<void> request { "$request" };
+    inline static constexpr Server::RouterArg<void> response { "$response" };
     inline static constexpr Server::RouterArg<void> url { "$url" };
     inline static constexpr Server::RouterArg<void> headers { "$headers" };
     inline static constexpr Server::RouterArg<void> queries { "$queries" };

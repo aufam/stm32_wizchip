@@ -9,9 +9,6 @@ static auto status_to_string(int status) -> std::string;
 
 auto http::Server::response(int socket_number, etl::Vector<uint8_t> data) -> Stream {
     auto start_time = etl::time::now();
-    bool no_memory = false;
-    bool handled = false;
-
     auto response = Response {};
     auto request = Request::parse(etl::move(data));
 
@@ -22,6 +19,7 @@ auto http::Server::response(int socket_number, etl::Vector<uint8_t> data) -> Str
         len = etl::string_view(request.headers["content-length"].c_str()).to_int() - request.body.size();
     }
 
+    bool no_memory = false;
     if (int(etl::heap::freeSize) < len) {
         no_memory = true;
     } else if (len > 0) {
@@ -35,10 +33,11 @@ auto http::Server::response(int socket_number, etl::Vector<uint8_t> data) -> Str
     // TODO: version handling
     response.version = request.version;
 
-    // body handling
+    // router handling
     if (no_memory) {
         response.status = StatusInternalServerError;
     } else {
+        bool handled = false;
         for (auto &router : routers) {
             if (router.path == request.path.path) {
                 auto it = etl::find(router.methods, request.method);
@@ -53,22 +52,20 @@ auto http::Server::response(int socket_number, etl::Vector<uint8_t> data) -> Str
             }
         }
     
-        if (not handled) {
-            response.status = StatusNotFound;
-        }
+        if (not handled) response.status = StatusNotFound;
     }
 
     // generate payload
     if (response.status_string.empty()) response.status_string = status_to_string(response.status);
     if (not response.body.empty()) response.headers["Content-Length"] = std::to_string(response.body.size());
     if (name) response.headers["Server"] = name;
-    if (show_response_time) response.headers["X-Response-Time"] = std::to_string(etl::time::elapsed(start_time).tick) + "ms";
 
     for (auto &[header, fn] : global_headers) {
         auto head = fn(request, response);
         if (not head.empty()) response.headers[header] = etl::move(head);
     }
 
+    if (show_response_time) response.headers["X-Response-Time"] = std::to_string(etl::time::elapsed(start_time).tick) + "ms";
     if (logger) logger(request, response);
     return response.dump();
 }

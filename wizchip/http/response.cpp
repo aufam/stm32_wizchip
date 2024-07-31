@@ -44,11 +44,6 @@ auto http::Response::dump() -> Stream {
     static const uint8_t colon[] = {':', ' '};
 
     Stream s;
-    std::string line;
-    std::string status_code = std::to_string(status);
-
-    line.reserve(version.size() + 1 + status_code.size() + 1 + status_string.size() + 2);
-
     s << wizchip_http_request_response_string_to_stream_rule(mv | version);
     s << etl::iter(space);
     s << wizchip_http_request_response_string_to_stream_rule(std::to_string(status));
